@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; padding: 0; }
+body {
+  background-color: #060d1a;
+  background-image:
+    linear-gradient(rgba(6,13,26,0.86), rgba(6,13,26,0.86)),
+    url('/images/starfield.png');
+  background-size: cover;
+  background-attachment: fixed;
+  background-position: center;
+  color: #f0f6ff;
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #3d5a7a; }
+
+/* Shimmer */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, #0f1f3d 25%, #152a4e 50%, #0f1f3d 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* Status pulse */
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.pulse-warning { animation: statusPulse 1.5s ease-in-out infinite; }
+
+/* Form inputs used in wizard */
+.field-input {
+  width: 100%;
+  background: #0f1f3d;
+  border: 1px solid #1e3a5f;
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: #f0f6ff;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 150ms ease;
+}
+.field-input:focus {
+  border-color: #4DA6FF;
+  box-shadow: 0 0 0 2px rgba(77,166,255,0.12);
+}
+.field-input option {
+  background: #0b1628;
+}
+
+/* Titlebar drag region */
+[data-tauri-drag-region] { -webkit-app-region: drag; }
+[data-tauri-drag-region] button,
+[data-tauri-drag-region] a { -webkit-app-region: no-drag; }

@@ -1,0 +1,8 @@
+# All files require review from a SlothLabs maintainer.
+# This prevents unauthorized changes from being merged.
+* @slothlabs
+
+# Release and distribution config requires extra scrutiny
+.github/workflows/ @slothlabs
+distribute/        @slothlabs
+src-tauri/tauri.conf.json @slothlabs

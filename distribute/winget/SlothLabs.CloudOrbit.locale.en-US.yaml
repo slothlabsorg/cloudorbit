@@ -1,0 +1,29 @@
+# WinGet locale manifest
+# Path in microsoft/winget-pkgs:
+#   manifests/s/SlothLabs/CloudOrbit/0.1.0/SlothLabs.CloudOrbit.locale.en-US.yaml
+
+PackageIdentifier: SlothLabs.CloudOrbit
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: SlothLabs
+PublisherUrl: https://slothlabs.org
+PublisherSupportUrl: https://github.com/slothlabs/cloudorbit/issues
+PackageName: CloudOrbit
+PackageUrl: https://slothlabs.org/cloudorbit
+License: MIT
+LicenseUrl: https://github.com/slothlabs/cloudorbit/blob/main/LICENSE
+ShortDescription: AWS session manager — SSO, kubeconfig, and web console in one app
+Description: |-
+  CloudOrbit is a macOS/Windows/Linux desktop app that manages AWS SSO sessions,
+  writes temporary credentials, activates EKS kubeconfig contexts, and opens the
+  AWS web console — all with one click.
+Tags:
+  - aws
+  - cloud
+  - devops
+  - kubernetes
+  - eks
+  - sso
+ReleaseNotesUrl: https://github.com/slothlabs/cloudorbit/releases/tag/v0.1.0
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

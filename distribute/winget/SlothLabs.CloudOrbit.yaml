@@ -1,0 +1,18 @@
+# WinGet package manifest — version file
+# Path in microsoft/winget-pkgs:
+#   manifests/s/SlothLabs/CloudOrbit/0.1.0/SlothLabs.CloudOrbit.yaml
+#
+# The update-winget.yml workflow auto-submits PRs for new versions.
+# This file is the INITIAL submission template.
+#
+# To submit manually:
+#   winget-create submit \
+#     --token $GITHUB_PAT \
+#     --submit \
+#     https://github.com/slothlabs/cloudorbit/releases/download/v0.1.0/CloudOrbit_0.1.0_x64-setup.exe
+
+PackageIdentifier: SlothLabs.CloudOrbit
+PackageVersion: 0.1.0
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0

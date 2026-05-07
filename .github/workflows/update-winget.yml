@@ -1,0 +1,23 @@
+name: Update WinGet
+
+# Runs automatically when a GitHub Release is published
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-winget:
+    runs-on: windows-latest
+
+    steps:
+      - name: Submit to WinGet Community Repository
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          # Package identifier in microsoft/winget-pkgs
+          identifier: SlothLabs.CloudOrbit
+          # The release tag that was just published (e.g. v0.1.0)
+          release-tag: ${{ github.event.release.tag_name }}
+          # PAT with public_repo scope to open a PR in microsoft/winget-pkgs
+          token: ${{ secrets.WINGET_TOKEN }}
+          # Optional: only include the .msi installer (not the NSIS .exe)
+          # installers-regex: '\.msi$'

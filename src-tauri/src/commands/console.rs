@@ -8,7 +8,6 @@
 ///
 /// Because we use `reqwest` with `native-tls` the TLS stack reads from the system
 /// Keychain, so corporate CAs / Cloudflare certificates are trusted automatically.
-
 fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for byte in s.bytes() {

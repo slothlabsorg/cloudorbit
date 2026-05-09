@@ -1,6 +1,8 @@
 import React from 'react'
 import type { Session, ClusterInfo } from '@/types'
 import { formatExpiry } from '@/lib/time'
+import { api } from '@/lib/tauri'
+import pkg from '../../../package.json'
 
 interface StatusBarProps {
   activeSession?: Session | null
@@ -50,7 +52,28 @@ export function StatusBar({ activeSession, activeCluster }: StatusBarProps) {
             <span className="text-text-secondary text-[11px] font-mono">{activeCluster.name}</span>
           </div>
         )}
-        <span className="text-text-muted text-[11px]">CloudOrbit v0.1.0</span>
+        {/* SlothLabs attribution — always visible so users know where the app
+            comes from and how to support it. Links use the opener plugin so
+            the default browser handles them (not the Tauri webview). */}
+        <span className="text-text-muted text-[11px] flex items-center gap-1">
+          Made by{' '}
+          <button
+            onClick={() => api.openExternalUrl('https://slothlabs.org').catch(() => {})}
+            className="text-text-secondary hover:text-primary transition-colors underline-offset-2 hover:underline"
+            title="slothlabs.org"
+          >
+            SlothLabs
+          </button>
+          <span className="text-text-muted/50 px-0.5">·</span>
+          <button
+            onClick={() => api.openExternalUrl('https://ko-fi.com/slothlabs').catch(() => {})}
+            className="text-text-muted hover:text-primary transition-colors"
+            title="Support on Ko-fi"
+          >
+            ☕ Support
+          </button>
+        </span>
+        <span className="text-text-muted/60 text-[11px] font-mono">v{pkg.version}</span>
       </div>
     </div>
   )

@@ -3,6 +3,8 @@
 mod aws_http;
 mod commands;
 
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+
 /// Open an http(s) URL in the user's default browser. Only http/https are
 /// accepted — any other scheme is silently dropped to avoid passing
 /// arbitrary URIs to `open`, which on macOS would launch whatever handler is
@@ -60,6 +62,47 @@ fn notify(title: String, body: String) {
     }
 }
 
+/// Open the "About CloudOrbit" window. If one is already visible, focus it
+/// instead of spawning a duplicate. The window is rendered by the React app
+/// (`AboutWindow.tsx`) with the sloth mascot, version, tagline, and website
+/// links — visually consistent with the rest of the product. A plain
+/// osascript dialog only supports `.icns` for the icon, which is how the
+/// default macOS About panel ends up looking so plain.
+fn show_about(app: &tauri::AppHandle) {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+    if let Some(win) = app.get_webview_window("about") {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return;
+    }
+
+    let url = WebviewUrl::App("index.html?window=about".into());
+    let builder = WebviewWindowBuilder::new(app, "about", url)
+        .title("About CloudOrbit")
+        .inner_size(360.0, 520.0)
+        .min_inner_size(360.0, 520.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .center()
+        .focused(true);
+
+    // macOS: transparent titlebar overlay keeps the visual continuity with
+    // the main window. Other OSes get normal decorations.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
+
+    if let Err(e) = builder.build() {
+        eprintln!("failed to open about window: {e}");
+    }
+}
+
+// Needed so `get_webview_window` resolves on AppHandle.
+use tauri::Manager;
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -88,6 +131,34 @@ fn main() {
             // OS notifications for session-expiry reminders
             notify,
         ])
+        // Replace the default "About CloudOrbit" menu item with a custom one
+        // that shows a real dialog (tagline, version, link) instead of the
+        // default macOS plate with only the bundle icon + version.
+        .setup(|app| {
+            let about = MenuItemBuilder::with_id("about", "About CloudOrbit").build(app)?;
+            let app_submenu = SubmenuBuilder::new(app, "CloudOrbit")
+                .item(&about)
+                .separator()
+                .services()
+                .separator()
+                .hide()
+                .hide_others()
+                .show_all()
+                .separator()
+                .quit()
+                .build()?;
+            // Preserve the rest of the default menu (Edit / View / Window /
+            // Help) via the builder's convenience methods so ⌘C/⌘V/⌘W still
+            // work.
+            let menu = MenuBuilder::new(app)
+                .item(&app_submenu)
+                .build()?;
+            app.set_menu(menu)?;
+            app.on_menu_event(|app, event| {
+                if event.id() == "about" { show_about(app); }
+            });
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running CloudOrbit");
 }

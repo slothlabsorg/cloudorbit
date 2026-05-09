@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import type { Screen, Session, SsoGroup, ClusterInfo, ActivityEvent, Profile } from '@/types'
 import { api } from '@/lib/tauri'
-import { detectEnv, resolveEnv, envOverrideKey } from '@/lib/time'
-import type { EnvType } from '@/types'
+import { detectEnv, resolveEnv, envOverrideKey, accountNameFrom } from '@/lib/time'
+import type { EnvType, CustomTag } from '@/types'
 import { mockSessions, mockActivity } from '@/mock/data'
 import { Shell } from '@/components/layout/Shell'
 import { CommandPalette } from '@/components/ui/CommandPalette'
@@ -26,6 +26,20 @@ interface LoginState {
 }
 
 let sessionIdCounter = 100
+
+// ── SSO aliases — persisted mapping of startUrl → alias ────────────────────
+// AWS config (`~/.aws/config`) has no place to store a user-given alias, so
+// we keep them in localStorage and merge on load / update.
+const ALIAS_STORAGE_KEY = 'cloudorbit.ssoAliases'
+function readAliases(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(ALIAS_STORAGE_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch { return {} }
+}
+function writeAliases(aliases: Record<string, string>) {
+  try { localStorage.setItem(ALIAS_STORAGE_KEY, JSON.stringify(aliases)) } catch { /* quota */ }
+}
 
 // Read URL params for dev/preview mode
 function getUrlParam(key: string): string | null {
@@ -107,6 +121,29 @@ export default function App() {
     )
   }, [])
 
+  // ── Custom account tags ───────────────────────────────────────────────────
+  // Free-form label + color per account. Takes precedence over env overrides
+  // in the UI. Kept separate from envOverrides so the canonical prod/staging
+  // semantics (confirmation dialogs) still apply only to the canonical envs.
+  const [customTags, setCustomTags] = useState<Record<string, CustomTag>>(() => {
+    try {
+      const raw = localStorage.getItem('cloudorbit.customTags')
+      return raw ? JSON.parse(raw) : {}
+    } catch { return {} }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('cloudorbit.customTags', JSON.stringify(customTags)) } catch { /* quota */ }
+  }, [customTags])
+  const setCustomTag = useCallback((startUrl: string, accountId: string, tag: CustomTag | null) => {
+    const key = envOverrideKey(startUrl, accountId)
+    setCustomTags(prev => {
+      const next = { ...prev }
+      if (tag === null) delete next[key]
+      else next[key] = tag
+      return next
+    })
+  }, [])
+
   // Load config on mount
   useEffect(() => {
     const load = async () => {
@@ -141,7 +178,19 @@ export default function App() {
       setIsLoading(true)
       try {
         const config = await api.parseConfig()
-        setSsoGroups(config.ssoGroups)
+        // Normalise profile names + hydrate aliases from localStorage. The
+        // raw shape out of parse_config has no accountName and no alias
+        // — `~/.aws/config` doesn't store either. This patches both at the
+        // load boundary so everything downstream sees clean data.
+        const aliases = readAliases()
+        setSsoGroups(config.ssoGroups.map(g => ({
+          ...g,
+          alias: aliases[g.startUrl] ?? g.alias,
+          profiles: g.profiles.map(p => ({
+            ...p,
+            accountName: p.accountName ?? accountNameFrom(p),
+          })),
+        })))
       } catch (err) {
         // Not in Tauri or error — fall back to mock data
         console.warn('parse_config failed, using mock data:', err)
@@ -175,6 +224,38 @@ export default function App() {
     }
     window.addEventListener('keydown', handle)
     return () => window.removeEventListener('keydown', handle)
+  }, [])
+
+  // Scrub any session / profile that leaked a non-clean accountName from
+  // earlier builds. Handles both " / "-separated (old wizard output) and
+  // "-{roleName}" suffixed (parse_config output). Runs on mount only — once
+  // hydrated from parse_config the data is clean.
+  useEffect(() => {
+    setSessions(prev => {
+      let changed = false
+      const next = prev.map(s => {
+        const clean = accountNameFrom({ name: s.accountName, roleName: s.roleName })
+        if (clean !== s.accountName) {
+          changed = true
+          return { ...s, accountName: clean }
+        }
+        return s
+      })
+      return changed ? next : prev
+    })
+    setSsoGroups(prev => {
+      let changed = false
+      const next = prev.map(g => ({
+        ...g,
+        profiles: g.profiles.map(p => {
+          const clean = accountNameFrom(p)
+          if (p.accountName === clean) return p
+          changed = true
+          return { ...p, accountName: clean }
+        }),
+      }))
+      return changed ? next : prev
+    })
   }, [])
 
   // Add activity event helper
@@ -286,10 +367,20 @@ export default function App() {
       profile.roleName,
     )
 
+    // The session's accountName should be the CLEAN account name ("polaris-
+    // development"), not the wizard's display string ("polaris-development /
+    // PolarisReadOnly"). Prefer the explicit accountName field when the
+    // wizard set it; otherwise strip the " / role" suffix from the legacy
+    // `name` field; last resort is the `{accountId}-{roleName}` key.
+    const cleanAccountName =
+      profile.accountName
+      ?? profile.name?.split(' / ')[0]
+      ?? `${profile.accountId}-${profile.roleName}`
+
     const newSession: Session = {
       id: String(++sessionIdCounter),
       accountId: creds.accountId,
-      accountName: profile.name || `${profile.accountId}-${profile.roleName}`,
+      accountName: cleanAccountName,
       roleName: creds.roleName,
       startUrl: profile.startUrl,
       ssoRegion: profile.ssoRegion,
@@ -402,6 +493,20 @@ export default function App() {
     }
   }, [addActivity])
 
+  // Update alias of an existing SSO connection (used by the inline rename
+  // button on Accounts — lets the user set the alias without re-running the
+  // whole wizard). Persists to localStorage so the label survives a reload.
+  const handleRenameSso = useCallback((startUrl: string, alias: string) => {
+    const trimmed = alias.trim()
+    setSsoGroups(prev => prev.map(g =>
+      g.startUrl === startUrl ? { ...g, alias: trimmed || undefined } : g
+    ))
+    const aliases = readAliases()
+    if (trimmed) aliases[startUrl] = trimmed
+    else delete aliases[startUrl]
+    writeAliases(aliases)
+  }, [])
+
   // Add a new SSO connection from the wizard
   const handleAddConnection = useCallback((group: SsoGroup) => {
     setSsoGroups(prev => {
@@ -435,8 +540,16 @@ export default function App() {
             sessions={sessions}
             ssoGroups={ssoGroups}
             isLoading={isLoading}
+            activity={activity}
+            favorites={favorites}
+            envOverrides={envOverrides}
             onSelectSession={setSelectedSession}
             onStartSession={handleStartSession}
+            onRenewSession={handleRenewSession}
+            onOpenConsole={handleOpenConsole}
+            onDetectClusters={handleDetectClusters}
+            onActivateCluster={handleActivateCluster}
+            onToggleFavorite={toggleFavorite}
             selectedSession={selectedSession}
             onAddConnection={() => setScreen('accounts')}
             onNavigate={setScreen}
@@ -457,6 +570,9 @@ export default function App() {
             onToggleFavorite={toggleFavorite}
             envOverrides={envOverrides}
             onSetEnvOverride={setEnvOverride}
+            customTags={customTags}
+            onSetCustomTag={setCustomTag}
+            onRenameSso={handleRenameSso}
           />
         )
       case 'sessions':

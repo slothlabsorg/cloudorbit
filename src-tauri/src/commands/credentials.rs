@@ -160,14 +160,15 @@ pub fn write_sso_config(
     let mut order: Vec<String> = Vec::new();
     let mut cur: Option<String> = None;
 
+    use std::collections::hash_map::Entry;
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
             let name = trimmed[1..trimmed.len() - 1].to_string();
             cur = Some(name.clone());
-            if !sections.contains_key(&name) {
-                order.push(name.clone());
-                sections.insert(name, Vec::new());
+            if let Entry::Vacant(e) = sections.entry(name.clone()) {
+                order.push(name);
+                e.insert(Vec::new());
             }
         } else if let Some(ref name) = cur {
             sections.get_mut(name).unwrap().push(line.to_string());

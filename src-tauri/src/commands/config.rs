@@ -118,7 +118,7 @@ pub fn parse_config() -> Result<ParsedConfig, String> {
     // Also surface any sso-session that has no matching profiles yet
     let profile_urls: std::collections::HashSet<_> =
         profiles.iter().map(|p| p.start_url.clone()).collect();
-    for (_, (url, region)) in &sso_sessions {
+    for (url, region) in sso_sessions.values() {
         if !profile_urls.contains(url) {
             profiles.push(Profile {
                 name: String::new(),

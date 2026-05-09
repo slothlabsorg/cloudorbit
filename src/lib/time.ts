@@ -21,6 +21,24 @@ export function detectEnv(name: string): EnvType {
   return 'unknown'
 }
 
+export function envOverrideKey(startUrl: string, accountId: string): string {
+  return `${startUrl}|${accountId}`
+}
+
+/** Override takes precedence over name-based auto-detection. */
+export function resolveEnv(
+  overrides: Record<string, EnvType>,
+  startUrl: string,
+  accountId: string | null | undefined,
+  accountName: string,
+): EnvType {
+  if (accountId) {
+    const o = overrides[envOverrideKey(startUrl, accountId)]
+    if (o) return o
+  }
+  return detectEnv(accountName)
+}
+
 export function timeAgo(date: Date): string {
   const diffMs = Date.now() - date.getTime()
   const diffMin = Math.floor(diffMs / 60000)

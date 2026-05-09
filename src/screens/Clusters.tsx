@@ -18,6 +18,9 @@ export function Clusters({ sessions, onActivateCluster, onDetectClusters }: Clus
   const [activating, setActivating] = useState<string | null>(null)
   const [confirmModal, setConfirmModal] = useState<{ cluster: ClusterInfo; session: Session } | null>(null)
   const [successModal, setSuccessModal] = useState<{ cluster: ClusterInfo } | null>(null)
+  // Per-session detection error — rendered inline under the session header
+  // when a list_eks_clusters call fails (auth denied, wrong region, etc.).
+  const [detectErrors, setDetectErrors] = useState<Record<string, string>>({})
 
   // All clusters from all sessions
   const sessionClusters: { session: Session; cluster: ClusterInfo }[] = sessions.flatMap(s =>
@@ -28,8 +31,11 @@ export function Clusters({ sessions, onActivateCluster, onDetectClusters }: Clus
 
   const handleDetect = async (session: Session) => {
     setDetecting(session.id)
+    setDetectErrors(e => { const { [session.id]: _, ...rest } = e; return rest })
     try {
       await onDetectClusters?.(session)
+    } catch (err) {
+      setDetectErrors(e => ({ ...e, [session.id]: String(err) }))
     } finally {
       setDetecting(null)
     }
@@ -104,6 +110,14 @@ export function Clusters({ sessions, onActivateCluster, onDetectClusters }: Clus
                     Detect Clusters
                   </Button>
                 </div>
+
+                {/* Detection error */}
+                {detectErrors[session.id] && (
+                  <div className="mx-4 mt-3 mb-1 px-3 py-2 rounded-lg bg-danger/10 border border-danger/30 text-xs">
+                    <p className="text-danger font-semibold mb-1">Cluster detection failed</p>
+                    <pre className="text-danger/80 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed">{detectErrors[session.id]}</pre>
+                  </div>
+                )}
 
                 {/* Clusters list */}
                 {isDetecting ? (

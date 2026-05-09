@@ -44,70 +44,67 @@ export interface KubeconfigResult {
   kubeconfigPath: string
 }
 
+// Tauri 2 auto-maps camelCase JS args to snake_case Rust parameters. The old
+// code here was passing snake_case from JS, which Tauri then treats as an
+// unknown key — the Rust command fails with "missing required key startUrl".
+// All invoke calls below pass camelCase keys; Tauri does the conversion.
 export const api = {
   parseConfig: () => invoke<ParsedConfig>('parse_config'),
 
   checkSsoLogin: (startUrl: string) =>
-    invoke<boolean>('check_sso_login', { start_url: startUrl }),
+    invoke<boolean>('check_sso_login', { startUrl }),
 
   ssoLoginStart: (startUrl: string, ssoRegion: string) =>
-    invoke<SsoLoginStartResult>('sso_login_start', { start_url: startUrl, sso_region: ssoRegion }),
+    invoke<SsoLoginStartResult>('sso_login_start', { startUrl, ssoRegion }),
 
   ssoLoginPoll: (clientId: string, clientSecret: string, deviceCode: string, startUrl: string, ssoRegion: string) =>
     invoke<{ success: boolean; pending?: boolean; error?: string }>('sso_login_poll', {
-      client_id: clientId,
-      client_secret: clientSecret,
-      device_code: deviceCode,
-      start_url: startUrl,
-      sso_region: ssoRegion,
+      clientId, clientSecret, deviceCode, startUrl, ssoRegion,
     }),
 
   listAccounts: (startUrl: string, ssoRegion: string) =>
-    invoke<AccountInfo[]>('list_accounts', { start_url: startUrl, sso_region: ssoRegion }),
+    invoke<AccountInfo[]>('list_accounts', { startUrl, ssoRegion }),
 
   assumeRole: (startUrl: string, ssoRegion: string, accountId: string, roleName: string) =>
-    invoke<AssumeRoleResult>('assume_role', {
-      start_url: startUrl,
-      sso_region: ssoRegion,
-      account_id: accountId,
-      role_name: roleName,
-    }),
+    invoke<AssumeRoleResult>('assume_role', { startUrl, ssoRegion, accountId, roleName }),
 
   listEksClusters: (region: string, accessKeyId: string, secretAccessKey: string, sessionToken: string) =>
     invoke<ClusterInfo[]>('list_eks_clusters', {
-      region,
-      access_key_id: accessKeyId,
-      secret_access_key: secretAccessKey,
-      session_token: sessionToken,
+      region, accessKeyId, secretAccessKey, sessionToken,
     }),
 
   updateKubeconfig: (cluster: ClusterInfo, profileName?: string) =>
     invoke<KubeconfigResult>('update_kubeconfig', {
       cluster,
-      profile_name: profileName ?? null,
+      profileName: profileName ?? null,
     }),
 
   listEc2Instances: (region: string, accessKeyId: string, secretAccessKey: string, sessionToken: string) =>
     invoke<Ec2Instance[]>('list_ec2_instances', {
-      region,
-      access_key_id: accessKeyId,
-      secret_access_key: secretAccessKey,
-      session_token: sessionToken,
+      region, accessKeyId, secretAccessKey, sessionToken,
     }),
 
   openSsmSession: (instanceId: string, region: string, profileName: string) =>
-    invoke<void>('open_ssm_session', {
-      instance_id: instanceId,
-      region,
-      profile_name: profileName,
-    }),
+    invoke<void>('open_ssm_session', { instanceId, region, profileName }),
 
   openWebConsole: (accessKeyId: string, secretAccessKey: string, sessionToken: string, region: string, destination?: string) =>
     invoke<void>('open_web_console', {
-      access_key_id: accessKeyId,
-      secret_access_key: secretAccessKey,
-      session_token: sessionToken,
-      region,
+      accessKeyId, secretAccessKey, sessionToken, region,
       destination: destination ?? null,
+    }),
+
+  openExternalUrl: (url: string) => invoke<void>('open_external_url', { url }),
+
+  notify: (title: string, body: string) =>
+    invoke<void>('notify', { title, body }),
+
+  writeSsoConfig: (startUrl: string, ssoRegion: string, accounts: AccountInfo[]) =>
+    invoke<{ sessionName: string; profileCount: number }>('write_sso_config', {
+      startUrl, ssoRegion,
+      accounts: accounts.map(a => ({
+        accountId: a.accountId,
+        accountName: a.accountName,
+        roles: a.roles.map(r => ({ roleName: r.roleName })),
+      })),
     }),
 }

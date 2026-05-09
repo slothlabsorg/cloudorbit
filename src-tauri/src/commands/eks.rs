@@ -2,9 +2,10 @@ use std::fs;
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
-use aws_config::Region;
 use aws_credential_types::Credentials as AwsCreds;
 use aws_sdk_eks::Client as EksClient;
+
+use crate::aws_http;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,19 +46,27 @@ pub async fn list_eks_clusters(
         "cloudorbit",
     );
 
-    let cfg = aws_config::defaults(aws_config::BehaviorVersion::latest())
-        .region(Region::new(region.clone()))
-        .credentials_provider(creds)
-        .load()
-        .await;
+    let cfg = aws_http::config_for_region_with_creds(&region, creds).await;
 
     let eks = EksClient::new(&cfg);
+
+    // Full error-source chain on failure — the default `e.to_string()` on
+    // AWS SDK errors often reports just "service error" with no code or body.
+    let fmt_err = |stage: &str, e: &dyn std::error::Error| {
+        let mut out = format!("{} (region={}): {}", stage, region, e);
+        let mut src = e.source();
+        while let Some(s) = src {
+            out.push_str(&format!("\n  caused by: {}", s));
+            src = s.source();
+        }
+        out
+    };
 
     let names = eks
         .list_clusters()
         .send()
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| fmt_err("list_clusters", &e))?
         .clusters()
         .to_vec();
 

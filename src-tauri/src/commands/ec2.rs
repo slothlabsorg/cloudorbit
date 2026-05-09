@@ -1,9 +1,10 @@
 use std::process::Command;
 use serde::{Deserialize, Serialize};
-use aws_config::Region;
 use aws_credential_types::Credentials as AwsCreds;
 use aws_sdk_ec2::Client as Ec2Client;
 use aws_sdk_ec2::types::Filter;
+
+use crate::aws_http;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,11 +37,7 @@ pub async fn list_ec2_instances(
     let creds = AwsCreds::new(
         access_key_id, secret_access_key, Some(session_token), None, "cloudorbit",
     );
-    let cfg = aws_config::defaults(aws_config::BehaviorVersion::latest())
-        .region(Region::new(region.clone()))
-        .credentials_provider(creds)
-        .load()
-        .await;
+    let cfg = aws_http::config_for_region_with_creds(&region, creds).await;
 
     let ec2 = Ec2Client::new(&cfg);
 

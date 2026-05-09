@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import type { Session, SsoGroup, Profile, ClusterInfo } from '@/types'
-import { EnvBadge, MethodChip, StatusChip } from '@/components/ui/Badge'
+import type { Session, SsoGroup, Profile, ClusterInfo, EnvType } from '@/types'
+import { EnvBadge, EnvEditableBadge, MethodChip, StatusChip } from '@/components/ui/Badge'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonRow } from '@/components/ui/Skeleton'
@@ -9,7 +9,7 @@ import { ProgressBar } from '@/components/ui/ProgressBar'
 import { Toggle } from '@/components/ui/Toggle'
 import Button from '@/components/ui/Button'
 import { AddConnectionWizard } from '@/components/ui/AddConnectionWizard'
-import { formatExpiry, detectEnv } from '@/lib/time'
+import { formatExpiry, detectEnv, envOverrideKey } from '@/lib/time'
 
 type FilterType = 'all' | 'sso' | 'iam' | 'federated' | 'chained' | 'favorites'
 
@@ -21,6 +21,15 @@ interface AccountsProps {
   onSelectSession: (s: Session) => void
   onStartSession: (p: Profile) => Promise<void>
   onAddConnection: (group: SsoGroup) => void
+  onDetectClusters?: (s: Session) => Promise<void>
+  favorites: Set<string>
+  onToggleFavorite: (key: string) => void
+  envOverrides: Record<string, EnvType>
+  onSetEnvOverride: (startUrl: string, accountId: string, env: EnvType | null) => void
+}
+
+function favoriteKey(startUrl: string, accountId: string, roleName: string): string {
+  return `${startUrl}|${accountId}|${roleName}`
 }
 
 interface AccountRow {
@@ -41,13 +50,16 @@ function maskId(id: string): string {
 
 export function Accounts({
   sessions, ssoGroups, isLoading, selectedSession,
-  onSelectSession, onStartSession, onAddConnection,
+  onSelectSession, onStartSession, onAddConnection, onDetectClusters,
+  favorites, onToggleFavorite, envOverrides, onSetEnvOverride,
 }: AccountsProps) {
   const [filter, setFilter] = useState<FilterType>('all')
   const [search, setSearch] = useState('')
   const [wizardOpen, setWizardOpen] = useState(false)
   const [starting, setStarting] = useState<string | null>(null)
-  const [selectedAccount, setSelectedAccount] = useState<AccountRow | null>(null)
+  // Store only the key — this way when `sessions` updates (e.g. after
+  // detecting clusters), the derived `selectedAccount` reflects fresh state.
+  const [selectedAccountKey, setSelectedAccountKey] = useState<string | null>(null)
 
   const allRows: AccountRow[] = useMemo(() => {
     const rows: AccountRow[] = []
@@ -96,7 +108,11 @@ export function Accounts({
 
   const filtered = useMemo(() => {
     return allRows.filter(row => {
-      if (filter === 'favorites' && row.session?.isFavorite !== true) return false
+      const favKey = row.accountId && row.roleName
+        ? favoriteKey(row.profile.startUrl, row.accountId, row.roleName)
+        : null
+      const isFav = favKey ? favorites.has(favKey) : false
+      if (filter === 'favorites' && !isFav) return false
       if (filter !== 'all' && filter !== 'favorites' && row.method !== filter) return false
       if (search.trim()) {
         const q = search.toLowerCase()
@@ -106,7 +122,49 @@ export function Accounts({
       }
       return true
     })
-  }, [allRows, filter, search])
+  }, [allRows, filter, search, favorites])
+
+  // Group rows into SSO connection → account → [roles] shape so the UI mirrors
+  // the AWS SSO portal. Flat list became unusable with many accounts/roles.
+  // Non-SSO rows (iam/federated/chained) fall into an "Other" bucket at the end.
+  const grouped = useMemo(() => {
+    type AccountGroup = { accountId: string; accountName: string; rows: AccountRow[] }
+    type SsoView = { startUrl: string; label: string; accounts: AccountGroup[] }
+    const bySso = new Map<string, SsoView>()
+    const orphan: AccountRow[] = []
+
+    // Resolve each startUrl to a preferred label: user-given alias first,
+    // then hostname prefix. Derived once up-front so all rows from the same
+    // SSO render under a single consistent header.
+    const ssoLabels = new Map<string, string>()
+    for (const g of ssoGroups) {
+      let fallback = 'SSO'
+      try { fallback = new URL(g.startUrl).hostname.split('.')[0] } catch { /* keep */ }
+      ssoLabels.set(g.startUrl, (g.alias && g.alias.trim()) || fallback)
+    }
+
+    for (const row of filtered) {
+      if (row.method !== 'sso' || !row.accountId) { orphan.push(row); continue }
+      const startUrl = row.profile.startUrl
+      if (!bySso.has(startUrl)) {
+        let fallback = 'SSO'
+        try { fallback = new URL(startUrl).hostname.split('.')[0] } catch { /* keep default */ }
+        const label = ssoLabels.get(startUrl) ?? fallback
+        bySso.set(startUrl, { startUrl, label, accounts: [] })
+      }
+      const sso = bySso.get(startUrl)!
+      let acc = sso.accounts.find(a => a.accountId === row.accountId)
+      if (!acc) { acc = { accountId: row.accountId, accountName: row.name, rows: [] }; sso.accounts.push(acc) }
+      acc.rows.push(row)
+    }
+    for (const sso of bySso.values()) {
+      sso.accounts.sort((a, b) => a.accountName.localeCompare(b.accountName))
+      for (const acc of sso.accounts) acc.rows.sort((a, b) => (a.roleName ?? '').localeCompare(b.roleName ?? ''))
+    }
+    const ssoSections = Array.from(bySso.values()).sort((a, b) => a.label.localeCompare(b.label))
+    orphan.sort((a, b) => a.name.localeCompare(b.name))
+    return { ssoGroups: ssoSections, orphan }
+  }, [filtered, ssoGroups])
 
   const counts = useMemo(() => ({
     all: allRows.length,
@@ -114,8 +172,11 @@ export function Accounts({
     iam: allRows.filter(r => r.method === 'iam').length,
     federated: allRows.filter(r => r.method === 'federated').length,
     chained: allRows.filter(r => r.method === 'chained').length,
-    favorites: allRows.filter(r => r.session?.isFavorite).length,
-  }), [allRows])
+    favorites: allRows.filter(r => {
+      if (!r.accountId || !r.roleName) return false
+      return favorites.has(favoriteKey(r.profile.startUrl, r.accountId, r.roleName))
+    }).length,
+  }), [allRows, favorites])
 
   const handleStart = async (row: AccountRow) => {
     if (!row.profile.accountId || !row.profile.roleName) return
@@ -124,8 +185,13 @@ export function Accounts({
   }
 
   const handleRowClick = (row: AccountRow) => {
-    setSelectedAccount(prev => prev?.key === row.key ? null : row)
+    setSelectedAccountKey(prev => prev === row.key ? null : row.key)
   }
+
+  const selectedAccount = useMemo(
+    () => allRows.find(r => r.key === selectedAccountKey) ?? null,
+    [allRows, selectedAccountKey],
+  )
 
   const FILTERS: { id: FilterType; label: string }[] = [
     { id: 'all',       label: `All ${counts.all}` },
@@ -206,34 +272,33 @@ export function Accounts({
               action={{ label: 'Clear filters', onClick: () => { setFilter('all'); setSearch('') } }}
             />
           ) : (
-            <>
-              <div
-                className="grid px-4 py-2 text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border-subtle sticky top-0 bg-bg-elevated z-10"
-                style={{ gridTemplateColumns: '24px 1fr 90px 90px 70px 70px 80px 80px' }}
-              >
-                <div />
-                <div>Account</div>
-                <div>Account ID</div>
-                <div>Role</div>
-                <div>Region</div>
-                <div>Method</div>
-                <div>Expires</div>
-                <div>Status</div>
-              </div>
-              <AnimatePresence initial={false}>
-                {filtered.map((row, i) => (
-                  <AccountTableRow
-                    key={row.key}
-                    row={row}
-                    index={i}
-                    isSelected={selectedAccount?.key === row.key}
-                    isStarting={starting === row.key}
-                    onClick={() => handleRowClick(row)}
-                    onStart={() => handleStart(row)}
-                  />
-                ))}
-              </AnimatePresence>
-            </>
+            <div className="py-2">
+              {grouped.ssoGroups.map(sso => (
+                <SsoSection
+                  key={sso.startUrl}
+                  sso={sso}
+                  selectedAccountKey={selectedAccountKey}
+                  startingKey={starting}
+                  favorites={favorites}
+                  onToggleFavorite={onToggleFavorite}
+                  envOverrides={envOverrides}
+                  onSetEnvOverride={onSetEnvOverride}
+                  onRowClick={handleRowClick}
+                  onStart={handleStart}
+                />
+              ))}
+              {grouped.orphan.length > 0 && (
+                <OrphanSection
+                  rows={grouped.orphan}
+                  selectedAccountKey={selectedAccountKey}
+                  startingKey={starting}
+                  favorites={favorites}
+                  onToggleFavorite={onToggleFavorite}
+                  onRowClick={handleRowClick}
+                  onStart={handleStart}
+                />
+              )}
+            </div>
           )}
         </div>
 
@@ -242,9 +307,10 @@ export function Accounts({
           {selectedAccount && (
             <AccountDetailPanel
               account={selectedAccount}
-              onClose={() => setSelectedAccount(null)}
+              onClose={() => setSelectedAccountKey(null)}
               onStart={() => handleStart(selectedAccount)}
               isStarting={starting === selectedAccount.key}
+              onDetectClusters={onDetectClusters}
             />
           )}
         </AnimatePresence>
@@ -255,6 +321,314 @@ export function Accounts({
         onClose={() => setWizardOpen(false)}
         onSave={onAddConnection}
       />
+    </div>
+  )
+}
+
+// ── Grouped SSO rendering ────────────────────────────────────────────────────
+
+interface SsoSectionProps {
+  sso: { startUrl: string; label: string; accounts: { accountId: string; accountName: string; rows: AccountRow[] }[] }
+  selectedAccountKey: string | null
+  startingKey: string | null
+  favorites: Set<string>
+  onToggleFavorite: (key: string) => void
+  envOverrides: Record<string, EnvType>
+  onSetEnvOverride: (startUrl: string, accountId: string, env: EnvType | null) => void
+  onRowClick: (row: AccountRow) => void
+  onStart: (row: AccountRow) => void
+}
+
+function SsoSection({ sso, selectedAccountKey, startingKey, favorites, onToggleFavorite, envOverrides, onSetEnvOverride, onRowClick, onStart }: SsoSectionProps) {
+  const [collapsed, setCollapsed] = useState(false)
+  const roleCount = sso.accounts.reduce((n, a) => n + a.rows.length, 0)
+
+  return (
+    <div className="mb-4">
+      <button
+        onClick={() => setCollapsed(c => !c)}
+        className="w-full flex items-center gap-2 px-5 py-2 bg-bg-elevated border-b border-border-subtle sticky top-0 z-10 text-left hover:bg-bg-surface transition-colors"
+      >
+        <svg className={`w-3 h-3 text-text-muted transition-transform ${collapsed ? '' : 'rotate-90'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+          <polyline points="9 6 15 12 9 18"/>
+        </svg>
+        <span className="text-xs font-semibold text-text-primary uppercase tracking-wider">{sso.label}</span>
+        <span className="text-[10px] text-text-muted font-mono">
+          {sso.accounts.length} account{sso.accounts.length !== 1 ? 's' : ''} · {roleCount} role{roleCount !== 1 ? 's' : ''}
+        </span>
+      </button>
+
+      {!collapsed && (
+        <div className="px-2">
+          {sso.accounts.map(acc => (
+            <AccountAccordion
+              key={acc.accountId}
+              sso={sso}
+              account={acc}
+              selectedAccountKey={selectedAccountKey}
+              startingKey={startingKey}
+              favorites={favorites}
+              onToggleFavorite={onToggleFavorite}
+              envOverrides={envOverrides}
+              onSetEnvOverride={onSetEnvOverride}
+              onRowClick={onRowClick}
+              onStart={onStart}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AccountAccordion({
+  sso, account, selectedAccountKey, startingKey, favorites, onToggleFavorite,
+  envOverrides, onSetEnvOverride, onRowClick, onStart,
+}: {
+  sso: { startUrl: string; label: string }
+  account: { accountId: string; accountName: string; rows: AccountRow[] }
+  selectedAccountKey: string | null
+  startingKey: string | null
+  favorites: Set<string>
+  onToggleFavorite: (key: string) => void
+  envOverrides: Record<string, EnvType>
+  onSetEnvOverride: (startUrl: string, accountId: string, env: EnvType | null) => void
+  onRowClick: (row: AccountRow) => void
+  onStart: (row: AccountRow) => void
+}) {
+  // Default-expanded when a row inside is selected, the account has a live
+  // session, or any of its roles is favorited — those are the cases the user
+  // most likely cares about.
+  const anyFav = account.rows.some(r =>
+    r.accountId && r.roleName && favorites.has(favoriteKey(r.profile.startUrl, r.accountId, r.roleName))
+  )
+  const [open, setOpen] = useState(() => {
+    if (account.rows.some(r => r.session)) return true
+    if (selectedAccountKey && account.rows.some(r => r.key === selectedAccountKey)) return true
+    return anyFav
+  })
+  const activeCount = account.rows.filter(r => r.session && new Date(r.session.expiresAt).getTime() > Date.now()).length
+  // Account-level env — override first, then fall back to the auto-detected
+  // value from the account name. The dot on the badge signals overridden.
+  const overrideKey = envOverrideKey(sso.startUrl, account.accountId)
+  const env = envOverrides[overrideKey] ?? detectEnv(account.accountName)
+  const overridden = overrideKey in envOverrides
+
+  // Favorites first within the account.
+  const sortedRows = [...account.rows].sort((a, b) => {
+    const aKey = a.accountId && a.roleName ? favoriteKey(a.profile.startUrl, a.accountId, a.roleName) : null
+    const bKey = b.accountId && b.roleName ? favoriteKey(b.profile.startUrl, b.accountId, b.roleName) : null
+    const aFav = aKey ? favorites.has(aKey) : false
+    const bFav = bKey ? favorites.has(bKey) : false
+    if (aFav !== bFav) return aFav ? -1 : 1
+    return (a.roleName ?? '').localeCompare(b.roleName ?? '')
+  })
+
+  return (
+    <div className="mb-1 rounded-lg overflow-hidden border border-border-subtle">
+      <div
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 bg-bg-surface hover:bg-bg-surface2 transition-colors text-left cursor-pointer"
+      >
+        <svg className={`w-3 h-3 text-text-muted flex-shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+          <polyline points="9 6 15 12 9 18"/>
+        </svg>
+        <EnvEditableBadge
+          env={env}
+          overridden={overridden}
+          onChange={next => onSetEnvOverride(sso.startUrl, account.accountId, next)}
+          onReset={() => onSetEnvOverride(sso.startUrl, account.accountId, null)}
+        />
+        <span className="text-sm font-medium text-text-primary truncate flex-1 min-w-0">{account.accountName}</span>
+        <span className="text-[10px] text-text-muted font-mono flex-shrink-0">{maskId(account.accountId)}</span>
+        <span className="text-[10px] text-text-muted flex-shrink-0">
+          {account.rows.length} role{account.rows.length !== 1 ? 's' : ''}
+          {activeCount > 0 && <span className="ml-1.5 text-success">· {activeCount} active</span>}
+        </span>
+      </div>
+
+      {open && (
+        <div className="divide-y divide-border-subtle">
+          {sortedRows.map(row => {
+            const favKey = row.accountId && row.roleName
+              ? favoriteKey(row.profile.startUrl, row.accountId, row.roleName)
+              : null
+            return (
+              <RoleRow
+                key={row.key}
+                row={row}
+                isSelected={selectedAccountKey === row.key}
+                isStarting={startingKey === row.key}
+                isFavorite={favKey ? favorites.has(favKey) : false}
+                onToggleFavorite={favKey ? () => onToggleFavorite(favKey) : undefined}
+                onClick={() => onRowClick(row)}
+                onStart={() => onStart(row)}
+              />
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RoleRow({ row, isSelected, isStarting, isFavorite, onToggleFavorite, onClick, onStart }: {
+  row: AccountRow; isSelected: boolean; isStarting: boolean
+  isFavorite: boolean
+  onToggleFavorite?: () => void
+  onClick: () => void; onStart: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const { label: expiryLabel, status: expiryStatus } = row.session
+    ? formatExpiry(row.session.expiresAt)
+    : { label: '—', status: 'idle' as const }
+  const sessionStatus = !row.session ? 'idle' :
+    expiryStatus === 'expired' ? 'expired' :
+    expiryStatus === 'expiring' ? 'expiring' : 'active'
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    if (!onToggleFavorite && !row.profile.accountId) return
+    e.preventDefault()
+    setMenu({ x: e.clientX, y: e.clientY })
+  }
+
+  // Close menu on any outside click / escape.
+  useEffect(() => {
+    if (!menu) return
+    const handle = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent && e.key !== 'Escape') return
+      setMenu(null)
+    }
+    window.addEventListener('mousedown', handle, true)
+    window.addEventListener('keydown', handle)
+    return () => {
+      window.removeEventListener('mousedown', handle, true)
+      window.removeEventListener('keydown', handle)
+    }
+  }, [menu])
+
+  return (
+    <div
+      onClick={onClick}
+      onContextMenu={handleContextMenu}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className={`flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors text-xs ${
+        isSelected ? 'bg-primary/8 border-l-2 border-l-primary' : hovered ? 'bg-bg-surface' : 'bg-bg-elevated'
+      }`}
+    >
+      <StatusDot status={sessionStatus} size="sm" />
+      {/* Favorite star — hidden until hover (or always-on when favorited) */}
+      {onToggleFavorite && (
+        <button
+          onClick={e => { e.stopPropagation(); onToggleFavorite() }}
+          className={`flex-shrink-0 rounded p-0.5 transition-opacity ${
+            isFavorite ? 'opacity-100 text-warning' : hovered ? 'opacity-60 text-text-muted hover:text-warning' : 'opacity-0'
+          }`}
+          title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+        >
+          <svg className="w-3 h-3" viewBox="0 0 24 24" fill={isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
+            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+          </svg>
+        </button>
+      )}
+      <span className="flex-1 min-w-0 font-mono text-text-secondary truncate">{row.roleName ?? '—'}</span>
+      <span className="font-mono text-text-muted flex-shrink-0">{row.region}</span>
+      <MethodChip method={row.method} />
+      <span className={`font-mono flex-shrink-0 w-16 text-right ${
+        expiryStatus === 'expired' ? 'text-danger' :
+        expiryStatus === 'expiring' ? 'text-warning' : 'text-text-muted'
+      }`}>{expiryLabel}</span>
+      <div className="flex items-center gap-1 w-16 justify-end">
+        <StatusChip status={sessionStatus} />
+        {hovered && !row.session && (
+          <Button
+            variant="secondary" size="sm" loading={isStarting}
+            className="py-0.5 px-1.5 text-[10px]"
+            onClick={e => { e.stopPropagation(); onStart() }}
+          >
+            Start
+          </Button>
+        )}
+      </div>
+
+      {menu && (
+        <div
+          className="fixed z-50 bg-bg-elevated border border-border rounded-lg shadow-xl py-1 min-w-40"
+          style={{ left: menu.x, top: menu.y }}
+          onClick={e => e.stopPropagation()}
+          onMouseDown={e => e.stopPropagation()}
+        >
+          {onToggleFavorite && (
+            <button
+              onClick={() => { onToggleFavorite(); setMenu(null) }}
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-bg-surface text-text-secondary flex items-center gap-2"
+            >
+              <svg className="w-3 h-3 text-warning" viewBox="0 0 24 24" fill={isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+              </svg>
+              {isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+            </button>
+          )}
+          {!row.session && row.profile.accountId && row.profile.roleName && (
+            <button
+              onClick={() => { onStart(); setMenu(null) }}
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-bg-surface text-text-secondary"
+            >
+              Start session
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function OrphanSection({ rows, selectedAccountKey, startingKey, favorites, onToggleFavorite, onRowClick, onStart }: {
+  rows: AccountRow[]
+  selectedAccountKey: string | null
+  startingKey: string | null
+  favorites: Set<string>
+  onToggleFavorite: (key: string) => void
+  onRowClick: (row: AccountRow) => void
+  onStart: (row: AccountRow) => void
+}) {
+  const [collapsed, setCollapsed] = useState(false)
+  return (
+    <div className="mb-4">
+      <button
+        onClick={() => setCollapsed(c => !c)}
+        className="w-full flex items-center gap-2 px-5 py-2 bg-bg-elevated border-b border-border-subtle sticky top-0 z-10 text-left hover:bg-bg-surface transition-colors"
+      >
+        <svg className={`w-3 h-3 text-text-muted transition-transform ${collapsed ? '' : 'rotate-90'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+          <polyline points="9 6 15 12 9 18"/>
+        </svg>
+        <span className="text-xs font-semibold text-text-primary uppercase tracking-wider">Other</span>
+        <span className="text-[10px] text-text-muted font-mono">{rows.length} {rows.length === 1 ? 'entry' : 'entries'}</span>
+      </button>
+      {!collapsed && (
+        <div className="px-2">
+          {rows.map(row => {
+            const favKey = row.accountId && row.roleName
+              ? favoriteKey(row.profile.startUrl, row.accountId, row.roleName)
+              : null
+            return (
+              <div key={row.key} className="mb-1 rounded-lg overflow-hidden border border-border-subtle">
+                <RoleRow
+                  row={row}
+                  isSelected={selectedAccountKey === row.key}
+                  isStarting={startingKey === row.key}
+                  isFavorite={favKey ? favorites.has(favKey) : false}
+                  onToggleFavorite={favKey ? () => onToggleFavorite(favKey) : undefined}
+                  onClick={() => onRowClick(row)}
+                  onStart={() => onStart(row)}
+                />
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -326,11 +700,12 @@ function AccountTableRow({ row, index, isSelected, isStarting, onClick, onStart 
 
 type DetailTab = 'overview' | 'roles' | 'clusters' | 'rules' | 'security'
 
-function AccountDetailPanel({ account, onClose, onStart, isStarting }: {
+function AccountDetailPanel({ account, onClose, onStart, isStarting, onDetectClusters }: {
   account: AccountRow
   onClose: () => void
   onStart: () => void
   isStarting: boolean
+  onDetectClusters?: (s: Session) => Promise<void>
 }) {
   const [tab, setTab] = useState<DetailTab>('overview')
   const { label: expiryLabel, status: expiryStatus } = account.session
@@ -404,7 +779,7 @@ function AccountDetailPanel({ account, onClose, onStart, isStarting }: {
           >
             {tab === 'overview' && <OverviewTab account={account} expiryLabel={expiryLabel} expiryStatus={expiryStatus} sessionStatus={sessionStatus} onStart={onStart} isStarting={isStarting} />}
             {tab === 'roles' && <RolesTab account={account} />}
-            {tab === 'clusters' && <ClustersTab account={account} />}
+            {tab === 'clusters' && <ClustersTab account={account} onDetectClusters={onDetectClusters} />}
             {tab === 'rules' && <RulesTab />}
             {tab === 'security' && <SecurityTab account={account} onClose={onClose} />}
           </motion.div>
@@ -548,8 +923,21 @@ function RolesTab({ account }: { account: AccountRow }) {
 
 // ── Tab: Clusters ─────────────────────────────────────────────────────────────
 
-function ClustersTab({ account }: { account: AccountRow }) {
+function ClustersTab({ account, onDetectClusters }: {
+  account: AccountRow
+  onDetectClusters?: (s: Session) => Promise<void>
+}) {
   const clusters: ClusterInfo[] = account.session?.clusters ?? []
+  const [detecting, setDetecting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const doDetect = async () => {
+    if (!account.session || !onDetectClusters) return
+    setDetecting(true); setError(null)
+    try { await onDetectClusters(account.session) }
+    catch (e) { setError(String(e)) }
+    finally { setDetecting(false) }
+  }
 
   return (
     <div className="px-4 py-3">
@@ -562,9 +950,18 @@ function ClustersTab({ account }: { account: AccountRow }) {
             {account.session ? 'No clusters detected for this account.' : 'Start a session to detect clusters.'}
           </p>
           {account.session && (
-            <button className="text-xs text-primary hover:text-primary/80 transition-colors">
-              Detect Clusters
+            <button
+              onClick={doDetect}
+              disabled={detecting}
+              className="text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50"
+            >
+              {detecting ? 'Detecting…' : 'Detect Clusters'}
             </button>
+          )}
+          {error && (
+            <pre className="mt-3 text-left bg-danger/10 border border-danger/30 rounded-lg px-2 py-1.5 text-danger/90 text-[10px] whitespace-pre-wrap break-words font-mono leading-relaxed">
+              {error}
+            </pre>
           )}
         </div>
       ) : (

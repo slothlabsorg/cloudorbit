@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import type { SsoGroup, EnvType } from '@/types'
+import type { SsoGroup } from '@/types'
+import { api, type AccountInfo } from '@/lib/tauri'
 import Button from './Button'
 import { Toggle } from './Toggle'
 
@@ -23,8 +24,9 @@ interface WizardData {
   targetRoleArn: string
   alias: string
   region: string
-  environment: EnvType
   isFavorite: boolean
+  // Populated during step 3 validation from the real Rust SSO flow.
+  discoveredAccounts: AccountInfo[]
 }
 
 const INITIAL: WizardData = {
@@ -32,7 +34,8 @@ const INITIAL: WizardData = {
   startUrl: '', ssoRegion: 'us-east-1',
   accessKeyId: '', secretAccessKey: '', showSecret: false,
   roleArn: '', principalArn: '', targetRoleArn: '',
-  alias: '', region: 'us-east-1', environment: 'dev', isFavorite: false,
+  alias: '', region: 'us-east-1', isFavorite: false,
+  discoveredAccounts: [],
 }
 
 const AWS_REGIONS = [
@@ -64,35 +67,125 @@ export function AddConnectionWizard({ open, onClose, onSave }: AddConnectionWiza
     if (open) { setStep(0); setData(INITIAL); setChecks([]); setValidationDone(false) }
   }, [open])
 
-  // Run validation when entering step 3
+  // Run validation when entering step 3.
+  //
+  // For SSO this performs the real AWS device-code flow: registers a client,
+  // opens the browser to verify, polls for approval, then lists accounts and
+  // writes the profiles to ~/.aws/config. Non-SSO methods still fall back to
+  // the prior simulated checks — they're wired separately.
   useEffect(() => {
     if (step !== 3) return
+    setValidationDone(false)
+
+    if (data.method !== 'sso') {
+      // Non-SSO (iam/federated/chained) — still simulated. Real impls for these
+      // methods are a future task; this preserves existing UX.
+      const list: Check[] = [
+        { label: 'Identity endpoint reachable', status: 'pending' },
+        { label: 'STS credentials generated', status: 'pending' },
+        { label: 'Available roles fetched', status: 'pending' },
+      ]
+      setChecks(list)
+      let cancelled = false
+      ;(async () => {
+        for (let i = 0; i < list.length; i++) {
+          if (cancelled) return
+          setChecks(c => c.map((ch, idx) => idx === i ? { ...ch, status: 'loading' } : ch))
+          await new Promise(r => setTimeout(r, 500))
+          if (cancelled) return
+          setChecks(c => c.map((ch, idx) => idx === i ? { ...ch, status: 'success' } : ch))
+        }
+        await new Promise(r => setTimeout(r, 300))
+        if (!cancelled) { setValidationDone(true); setStep(4) }
+      })()
+      return () => { cancelled = true }
+    }
+
+    // ── Real SSO flow ────────────────────────────────────────────────────────
     const list: Check[] = [
-      { label: 'Identity endpoint reachable', status: 'pending' },
-      { label: 'STS credentials generated', status: 'pending' },
-      { label: 'Available roles fetched', status: 'pending' },
-      { label: 'EKS cluster detection', status: 'pending' },
+      { label: 'Registering with SSO provider',  status: 'pending' },
+      { label: 'Waiting for browser approval',   status: 'pending' },
+      { label: 'Discovering accounts and roles', status: 'pending' },
+      { label: 'Saving to ~/.aws/config',        status: 'pending' },
     ]
     setChecks(list)
-    setValidationDone(false)
-    const delays = [500, 700, 600, 700]
     let cancelled = false
-    const run = async () => {
-      for (let i = 0; i < list.length; i++) {
+
+    const mark = (idx: number, status: CheckStatus, detail?: string) =>
+      setChecks(c => c.map((ch, i) => i === idx ? { ...ch, status, detail } : ch))
+
+    ;(async () => {
+      try {
+        // Step 1: register client + start device authorization (opens browser).
+        // Skip if a valid token is already cached.
+        const alreadyLoggedIn = await api.checkSsoLogin(data.startUrl).catch(() => false)
+        if (alreadyLoggedIn) {
+          mark(0, 'success', 'Using cached token')
+          mark(1, 'success', 'Already authorized')
+        } else {
+          mark(0, 'loading')
+          const loginInfo = await api.ssoLoginStart(data.startUrl, data.ssoRegion)
+          if (cancelled) return
+          mark(0, 'success', 'Browser opened — approve the device code')
+
+          // Step 2: poll until the user approves in the browser.
+          mark(1, 'loading', 'Check your browser to approve')
+          const pollMs = (loginInfo.interval + 1) * 1000
+          // eslint-disable-next-line no-constant-condition
+          while (true) {
+            await new Promise(r => setTimeout(r, pollMs))
+            if (cancelled) return
+            const res = await api.ssoLoginPoll(
+              loginInfo.clientId,
+              loginInfo.clientSecret,
+              loginInfo.deviceCode,
+              data.startUrl,
+              data.ssoRegion,
+            )
+            if (cancelled) return
+            if (res.success) break
+            if (!res.pending) {
+              mark(1, 'error', res.error || 'Login failed')
+              return
+            }
+          }
+          mark(1, 'success', 'Approved')
+        }
+
+        // Step 3: list accounts + roles.
+        mark(2, 'loading')
+        const accounts = await api.listAccounts(data.startUrl, data.ssoRegion)
         if (cancelled) return
-        setChecks(c => c.map((ch, idx) => idx === i ? { ...ch, status: 'loading' } : ch))
-        await new Promise(r => setTimeout(r, delays[i]))
+        const roleCount = accounts.reduce((n, a) => n + a.roles.length, 0)
+        mark(2, 'success', `${accounts.length} account${accounts.length !== 1 ? 's' : ''} · ${roleCount} role${roleCount !== 1 ? 's' : ''}`)
+        setData(d => ({ ...d, discoveredAccounts: accounts }))
+
+        // Step 4: persist SSO profiles to ~/.aws/config so the AWS CLI and
+        // other tools can use them. Non-fatal if it fails — we still surface
+        // the profiles inside CloudOrbit via the wizard's save step.
+        mark(3, 'loading')
+        try {
+          const result = await api.writeSsoConfig(data.startUrl, data.ssoRegion, accounts)
+          if (cancelled) return
+          mark(3, 'success', `${result.profileCount} profiles written`)
+        } catch (err) {
+          if (cancelled) return
+          mark(3, 'warning', String(err))
+        }
+
+        await new Promise(r => setTimeout(r, 300))
+        if (!cancelled) { setValidationDone(true); setStep(4) }
+      } catch (err) {
         if (cancelled) return
-        const isEks = i === 3
-        const nonSso = data.method !== 'sso'
-        const status: CheckStatus = isEks && nonSso ? 'warning' : 'success'
-        const detail = isEks && nonSso ? 'IAM policy may not include eks:ListClusters' : undefined
-        setChecks(c => c.map((ch, idx) => idx === i ? { ...ch, status, detail } : ch))
+        // Mark the first non-success check as errored so the user sees what broke.
+        setChecks(c => {
+          const idx = c.findIndex(ch => ch.status !== 'success')
+          if (idx < 0) return c
+          return c.map((ch, i) => i === idx ? { ...ch, status: 'error', detail: String(err) } : ch)
+        })
       }
-      await new Promise(r => setTimeout(r, 400))
-      if (!cancelled) { setValidationDone(true); setStep(4) }
-    }
-    run()
+    })()
+
     return () => { cancelled = true }
   }, [step])
 
@@ -107,19 +200,37 @@ export function AddConnectionWizard({ open, onClose, onSave }: AddConnectionWiza
     return true
   }
 
-  const handleSave = (startSession = false) => {
+  const handleSave = (_startSession = false) => {
     const startUrl = data.startUrl || `https://${data.alias.toLowerCase().replace(/\s+/g,'-')}.awsapps.com/start`
+
+    // Build profiles from the real accounts+roles discovered in step 3 (SSO).
+    // If validation was skipped (non-SSO methods) we fall back to a single
+    // alias-based profile with unset accountId/roleName — the same shape the
+    // non-SSO flow produced previously.
+    const profiles = data.discoveredAccounts.length > 0
+      ? data.discoveredAccounts.flatMap(acc =>
+          acc.roles.map(role => ({
+            name: `${acc.accountName} / ${role.roleName}`,
+            startUrl,
+            ssoRegion: data.ssoRegion,
+            accountId: acc.accountId,
+            roleName: role.roleName,
+            region: data.region,
+          })))
+      : [{
+          name: data.alias,
+          startUrl,
+          ssoRegion: data.ssoRegion,
+          accountId: null,
+          roleName: null,
+          region: data.region,
+        }]
+
     const group: SsoGroup = {
       startUrl,
       ssoRegion: data.ssoRegion,
-      profiles: [{
-        name: data.alias,
-        startUrl,
-        ssoRegion: data.ssoRegion,
-        accountId: null,
-        roleName: null,
-        region: data.region,
-      }],
+      profiles,
+      alias: data.alias.trim() || undefined,
     }
     onSave(group)
     onClose()
@@ -501,23 +612,9 @@ function StepConfigure({ data, set }: {
             className="field-input"
           />
         </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Default Region">
-            <RegionSelect value={data.region} onChange={v => set('region', v)} />
-          </Field>
-          <Field label="Environment">
-            <select
-              value={data.environment}
-              onChange={e => set('environment', e.target.value as EnvType)}
-              className="field-input"
-            >
-              <option value="prod">Production</option>
-              <option value="staging">Staging</option>
-              <option value="dev">Development</option>
-              <option value="sandbox">Sandbox</option>
-            </select>
-          </Field>
-        </div>
+        <Field label="Default Region" help="Region used for discovering EKS clusters and opening the console. Each account is tagged per-session based on its name.">
+          <RegionSelect value={data.region} onChange={v => set('region', v)} />
+        </Field>
         <div className="flex items-center justify-between">
           <div>
             <p className="text-text-primary text-xs font-medium">Mark as favorite</p>
@@ -581,12 +678,9 @@ function StepSave({ data, set }: {
   data: WizardData
   set: <K extends keyof WizardData>(k: K, v: WizardData[K]) => void
 }) {
-  const ENV_COLORS: Record<string, string> = {
-    prod: 'bg-danger/10 text-danger border-danger/30',
-    staging: 'bg-warning/10 text-warning border-warning/30',
-    dev: 'bg-info/10 text-info border-info/30',
-    sandbox: 'bg-purple-400/10 text-purple-400 border-purple-400/30',
-  }
+  const accounts = data.discoveredAccounts
+  const roleCount = accounts.reduce((n, a) => n + a.roles.length, 0)
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 p-3 bg-success/8 border border-success/20 rounded-xl">
@@ -594,7 +688,19 @@ function StepSave({ data, set }: {
         <p className="text-success text-sm font-medium">Connection validated successfully</p>
       </div>
 
-      <Field label="Connection Alias">
+      {accounts.length > 0 && (
+        <div className="p-3 rounded-xl border border-border bg-bg-surface">
+          <p className="text-text-primary text-xs font-semibold mb-1">
+            {accounts.length} account{accounts.length !== 1 ? 's' : ''} · {roleCount} role{roleCount !== 1 ? 's' : ''} discovered
+          </p>
+          <p className="text-text-muted text-[11px] leading-relaxed">
+            Each account will be tagged with an environment automatically based on its name
+            (prod / staging / dev / sandbox). You can refine tags per-account in the Accounts view.
+          </p>
+        </div>
+      )}
+
+      <Field label="Connection Alias" help="Internal label for this SSO connection — used when it appears in the sidebar.">
         <input
           type="text"
           value={data.alias}
@@ -602,28 +708,6 @@ function StepSave({ data, set }: {
           className="field-input"
         />
       </Field>
-
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Environment">
-          <select
-            value={data.environment}
-            onChange={e => set('environment', e.target.value as EnvType)}
-            className="field-input"
-          >
-            <option value="prod">Production</option>
-            <option value="staging">Staging</option>
-            <option value="dev">Development</option>
-            <option value="sandbox">Sandbox</option>
-          </select>
-        </Field>
-        <div className="flex flex-col gap-1">
-          <span className="text-text-muted text-[11px] font-medium uppercase tracking-wider">Preview</span>
-          <div className={`text-xs font-semibold px-2.5 py-1.5 rounded-lg border inline-flex items-center gap-1.5 ${ENV_COLORS[data.environment] || ENV_COLORS.dev}`}>
-            <span className="w-1.5 h-1.5 rounded-full bg-current flex-shrink-0" />
-            {data.environment.toUpperCase()}
-          </div>
-        </div>
-      </div>
 
       <div className="flex items-center justify-between">
         <div>

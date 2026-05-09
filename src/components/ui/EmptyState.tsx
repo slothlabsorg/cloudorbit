@@ -15,9 +15,9 @@ interface EmptyStateProps {
 // Real brand images — swap paths when new assets are ready
 const IMAGES: Record<IllustrationVariant, string | null> = {
   wave:   '/images/logo-cloudorbit.PNG', // official CloudOrbit logo sticker
-  sleep:  '/images/sloth-laptop.png',   // sloth with laptop — no sessions
-  search: '/images/sloth-wave.png',     // sloth — no results
-  error:  '/images/sloth-wave.png',     // fallback until error asset available
+  sleep:  '/images/sloth-mascot.png',    // sloth mascot — sessions / clusters empty
+  search: '/images/sloth-mascot.png',    // same mascot for no-results
+  error:  '/images/sloth-mascot.png',    // fallback until error asset available
 }
 
 // Fallback SVG shown when image is missing/not-yet-created
@@ -57,7 +57,7 @@ function SlothImage({ variant }: { variant: IllustrationVariant }) {
     <img
       src={src}
       alt="CloudOrbit mascot"
-      className="w-52 h-auto object-contain drop-shadow-lg"
+      className="w-44 h-auto object-contain drop-shadow-lg"
       style={{ imageRendering: 'auto' }}
       onError={() => setFailed(true)}
     />
@@ -67,7 +67,7 @@ function SlothImage({ variant }: { variant: IllustrationVariant }) {
 export function EmptyState({ variant = 'wave', title, description, action, secondaryAction }: EmptyStateProps) {
   return (
     <motion.div
-      className="flex flex-col items-center justify-center py-16 px-6 text-center"
+      className="flex flex-col items-center justify-center py-10 px-6 text-center"
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
@@ -75,7 +75,7 @@ export function EmptyState({ variant = 'wave', title, description, action, secon
       <motion.div
         animate={{ y: [0, -5, 0] }}
         transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
-        className="mb-2 pt-2"
+        className="mb-2 pt-2 flex items-center justify-center"
       >
         <SlothImage variant={variant} />
       </motion.div>

@@ -1,16 +1,20 @@
 import React, { useState } from 'react'
 import { motion } from 'framer-motion'
+import { api } from '@/lib/tauri'
 
 export function Support() {
   const [logoCopied, setLogoCopied] = useState(false)
   const [logoFailed, setLogoFailed] = useState(false)
 
   const openLink = (url: string) => {
-    window.open(url, '_blank')
+    api.openExternalUrl(url).catch(() => {
+      // Browser-only dev fallback — never hits in packaged app
+      window.open(url, '_blank')
+    })
   }
 
   const copyGitHub = () => {
-    navigator.clipboard.writeText('https://github.com/slothlabs/cloudorbit')
+    navigator.clipboard.writeText('https://slothlabs.org/cloudorbit')
     setLogoCopied(true)
     setTimeout(() => setLogoCopied(false), 2000)
   }
@@ -34,9 +38,9 @@ export function Support() {
             </div>
           ) : (
             <img
-              src="/images/logo-cloudorbit.PNG"
-              alt="CloudOrbit"
-              className="w-28 h-auto drop-shadow-2xl rounded-2xl"
+              src="/images/sloth-donate-banner.png"
+              alt="CloudOrbit donate banner"
+              className="w-56 h-auto drop-shadow-2xl"
               onError={() => setLogoFailed(true)}
             />
           )}

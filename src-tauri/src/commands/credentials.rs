@@ -3,9 +3,9 @@ use std::fs;
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use aws_config::Region;
 use aws_sdk_sso::Client as SsoClient;
 
+use crate::aws_http;
 use crate::commands::sso::read_cached_token;
 
 // ── Assume role ──────────────────────────────────────────────────────────────
@@ -33,11 +33,7 @@ pub async fn assume_role(
     let access_token = read_cached_token(&start_url)
         .ok_or_else(|| "Not logged in".to_string())?;
 
-    let cfg = aws_config::defaults(aws_config::BehaviorVersion::latest())
-        .region(Region::new(sso_region))
-        .no_credentials()
-        .load()
-        .await;
+    let cfg = aws_http::config_for_region(&sso_region).await;
 
     let sso = SsoClient::new(&cfg);
 

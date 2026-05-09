@@ -3,9 +3,10 @@ use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use sha1::{Sha1, Digest};
 use chrono::{DateTime, Duration, Utc};
-use aws_config::Region;
 use aws_sdk_ssooidc::Client as OidcClient;
 use aws_sdk_sso::Client as SsoClient;
+
+use crate::aws_http;
 
 // ── SSO token cache ───────────────────────────────────────────────────────────
 //
@@ -136,13 +137,22 @@ pub async fn sso_login_start(
     start_url: String,
     sso_region: String,
 ) -> Result<SessionInfo, String> {
-    let cfg = aws_config::defaults(aws_config::BehaviorVersion::latest())
-        .region(Region::new(sso_region.clone()))
-        .no_credentials()
-        .load()
-        .await;
+    let cfg = aws_http::config_for_region(&sso_region).await;
 
     let oidc = OidcClient::new(&cfg);
+
+    // `e.to_string()` on an SdkError is short and often useless (just "dispatch
+    // failure" with no detail). We dig the whole error-source chain so the
+    // frontend gets something we can actually debug.
+    let fmt_err = |stage: &str, e: &dyn std::error::Error| {
+        let mut out = format!("{}: {}", stage, e);
+        let mut src = e.source();
+        while let Some(s) = src {
+            out.push_str(&format!("\n  caused by: {}", s));
+            src = s.source();
+        }
+        out
+    };
 
     let reg = oidc
         .register_client()
@@ -151,7 +161,7 @@ pub async fn sso_login_start(
         .scopes("sso:account:access")
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| fmt_err("register_client", &e))?;
 
     let da = oidc
         .start_device_authorization()
@@ -160,7 +170,7 @@ pub async fn sso_login_start(
         .start_url(&start_url)
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| fmt_err("start_device_authorization", &e))?;
 
     let uri = da
         .verification_uri_complete()
@@ -196,11 +206,7 @@ pub async fn sso_login_poll(
     start_url:    String,
     sso_region:   String,
 ) -> PollResult {
-    let cfg = aws_config::defaults(aws_config::BehaviorVersion::latest())
-        .region(Region::new(sso_region.clone()))
-        .no_credentials()
-        .load()
-        .await;
+    let cfg = aws_http::config_for_region(&sso_region).await;
 
     let oidc = OidcClient::new(&cfg);
 
@@ -223,12 +229,30 @@ pub async fn sso_login_poll(
             PollResult { success: true, pending: None, error: None }
         }
         Err(e) => {
-            let msg       = e.to_string();
-            let is_pending = msg.contains("AuthorizationPending") || msg.contains("SlowDown");
+            // Pending detection — use the raw error debug repr because
+            // `e.to_string()` for ServiceError doesn't always include the error
+            // code string (depends on SDK version).
+            let dbg = format!("{:?}", e);
+            let is_pending = dbg.contains("AuthorizationPending") || dbg.contains("SlowDown");
+
+            // Full source chain for everything else — previously "service
+            // error" reached the UI with no detail. Now we include the SDK
+            // error code, the HTTP body, and every `source()` level.
+            let mut detail = format!("{}", e);
+            let err_ref: &dyn std::error::Error = &e;
+            let mut src = err_ref.source();
+            while let Some(s) = src {
+                detail.push_str(&format!("\n  caused by: {}", s));
+                src = s.source();
+            }
+            if !is_pending {
+                detail.push_str(&format!("\n  debug: {}", dbg));
+            }
+
             PollResult {
                 success: false,
                 pending: Some(is_pending),
-                error:   if is_pending { None } else { Some(msg) },
+                error:   if is_pending { None } else { Some(detail) },
             }
         }
     }
@@ -329,11 +353,7 @@ pub async fn list_accounts(
     let access_token = read_cached_token(&start_url)
         .ok_or_else(|| "Not logged in — token expired or missing".to_string())?;
 
-    let cfg = aws_config::defaults(aws_config::BehaviorVersion::latest())
-        .region(Region::new(sso_region))
-        .no_credentials()
-        .load()
-        .await;
+    let cfg = aws_http::config_for_region(&sso_region).await;
 
     let sso          = SsoClient::new(&cfg);
     let mut accounts = Vec::new();

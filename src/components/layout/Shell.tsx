@@ -17,6 +17,7 @@ interface ShellProps {
   onRenewSession: (session: Session) => void
   onOpenConsole: (session: Session) => void
   onActivateCluster: (cluster: ClusterInfo, session: Session) => void
+  onDetectClusters?: (session: Session) => Promise<void>
   activeCluster: ClusterInfo | null
   activity: ActivityEvent[]
   children: React.ReactNode
@@ -25,7 +26,7 @@ interface ShellProps {
 export function Shell({
   screen, onNavigate, sidebarCollapsed, onToggleSidebar,
   sessions, selectedSession, onCloseDetail, onRenewSession, onOpenConsole,
-  onActivateCluster, activeCluster, activity, children,
+  onActivateCluster, onDetectClusters, activeCluster, activity, children,
 }: ShellProps) {
   // Find the primary active session for status bar
   const primarySession = selectedSession ?? sessions.find(s => new Date(s.expiresAt).getTime() > Date.now()) ?? null
@@ -64,6 +65,7 @@ export function Shell({
                   onRenew={onRenewSession}
                   onConsole={onOpenConsole}
                   onActivateCluster={onActivateCluster}
+                  onDetectClusters={onDetectClusters}
                 />
               </div>
             )}

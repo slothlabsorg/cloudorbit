@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "title": "CloudOrbit",
+        "width": 1020,
+        "height": 700,
+        "minWidth": 760,
+        "minHeight": 540,
+        "decorations": false
+      }
+    ]
+  }
+}

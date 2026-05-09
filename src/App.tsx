@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import type { Screen, Session, SsoGroup, ClusterInfo, ActivityEvent, Profile } from '@/types'
 import { api } from '@/lib/tauri'
-import { detectEnv } from '@/lib/time'
+import { detectEnv, resolveEnv, envOverrideKey } from '@/lib/time'
+import type { EnvType } from '@/types'
 import { mockSessions, mockActivity } from '@/mock/data'
 import { Shell } from '@/components/layout/Shell'
 import { CommandPalette } from '@/components/ui/CommandPalette'
@@ -48,6 +49,63 @@ export default function App() {
   const [loginState, setLoginState] = useState<Record<string, LoginState>>({})
   const [activity, setActivity] = useState<ActivityEvent[]>(URL_MOCK ? mockActivity : [])
   const [activeCluster, setActiveCluster] = useState<ClusterInfo | null>(null)
+
+  // ── Favorites ─────────────────────────────────────────────────────────────
+  // Role-level favorites, keyed by `${startUrl}|${accountId}|${roleName}` so
+  // they survive across SSO connections. Persisted to localStorage so the
+  // list sticks between app launches (unlike Session.isFavorite, which is
+  // ephemeral and resets when a session expires).
+  const [favorites, setFavorites] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('cloudorbit.favorites')
+      return new Set<string>(raw ? JSON.parse(raw) : [])
+    } catch { return new Set() }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('cloudorbit.favorites', JSON.stringify(Array.from(favorites))) } catch { /* quota — ignore */ }
+  }, [favorites])
+  const toggleFavorite = useCallback((key: string) => {
+    setFavorites(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      return next
+    })
+  }, [])
+
+  // ── Env overrides ─────────────────────────────────────────────────────────
+  // User-supplied env tags that take precedence over name-based detection.
+  // Keyed by `${startUrl}|${accountId}` so the override survives session
+  // renewals and applies to every role under that account.
+  const [envOverrides, setEnvOverrides] = useState<Record<string, EnvType>>(() => {
+    try {
+      const raw = localStorage.getItem('cloudorbit.envOverrides')
+      return raw ? JSON.parse(raw) : {}
+    } catch { return {} }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('cloudorbit.envOverrides', JSON.stringify(envOverrides)) } catch { /* quota */ }
+  }, [envOverrides])
+  const setEnvOverride = useCallback((startUrl: string, accountId: string, env: EnvType | null) => {
+    const key = envOverrideKey(startUrl, accountId)
+    setEnvOverrides(prev => {
+      const next = { ...prev }
+      if (env === null) delete next[key]
+      else next[key] = env
+      return next
+    })
+    // Also patch any live Session objects for this account so the badge
+    // re-renders immediately without waiting for a new session start.
+    setSessions(prev => prev.map(s =>
+      s.startUrl === startUrl && s.accountId === accountId
+        ? { ...s, environment: env ?? detectEnv(s.accountName) }
+        : s
+    ))
+    setSelectedSession(prev =>
+      prev && prev.startUrl === startUrl && prev.accountId === accountId
+        ? { ...prev, environment: env ?? detectEnv(prev.accountName) }
+        : prev
+    )
+  }, [])
 
   // Load config on mount
   useEffect(() => {
@@ -128,6 +186,50 @@ export default function App() {
     }, ...prev])
   }, [])
 
+  // ── Expiry notifications ──────────────────────────────────────────────────
+  // Fire a native OS notification when a session crosses 30 / 15 / 5 minute
+  // thresholds before expiry. Per-session/per-threshold set is held in a ref
+  // so a threshold only fires ONCE per session lifetime — otherwise the
+  // 1-minute polling loop would keep re-notifying.
+  const firedRef = useRef<Map<string, Set<number>>>(new Map())
+  useEffect(() => {
+    const THRESHOLDS_MIN = [30, 15, 5]
+    const tick = () => {
+      const now = Date.now()
+      for (const s of sessions) {
+        const remainMs = new Date(s.expiresAt).getTime() - now
+        if (remainMs <= 0) continue
+        const remainMin = remainMs / 60000
+        const fired = firedRef.current.get(s.id) ?? new Set<number>()
+        for (const t of THRESHOLDS_MIN) {
+          if (fired.has(t)) continue
+          // Fire when we're in a 1-minute window just below the threshold.
+          // e.g. threshold=30 → fire when remaining is 29.xx–30.00.
+          if (remainMin > t - 1 && remainMin <= t) {
+            fired.add(t)
+            firedRef.current.set(s.id, fired)
+            api.notify(
+              `Session expiring in ${t} min`,
+              `${s.accountName} / ${s.roleName} — renew to keep access.`,
+            ).catch(() => { /* best-effort */ })
+            addActivity({
+              type: 'session-expire',
+              title: `Session expiring in ${t} min`,
+              reference: `${s.accountName} / ${s.roleName}`,
+            })
+          }
+        }
+      }
+      // Clean up entries for sessions that no longer exist, so the map
+      // doesn't grow forever as sessions are renewed.
+      const ids = new Set(sessions.map(s => s.id))
+      for (const id of firedRef.current.keys()) if (!ids.has(id)) firedRef.current.delete(id)
+    }
+    tick()
+    const h = setInterval(tick, 60_000)
+    return () => clearInterval(h)
+  }, [sessions, addActivity])
+
   // Start a session from a profile
   const handleStartSession = useCallback(async (profile: Profile): Promise<void> => {
     if (!profile.accountId || !profile.roleName) {
@@ -198,7 +300,7 @@ export default function App() {
       expiresAt: creds.expiresAt ?? new Date(Date.now() + 8 * 3600 * 1000).toISOString(),
       profileName: creds.profileName,
       method: 'sso',
-      environment: detectEnv(profile.name),
+      environment: resolveEnv(envOverrides, profile.startUrl, profile.accountId, profile.name),
       isFavorite: false,
       clusters: [],
     }
@@ -216,7 +318,7 @@ export default function App() {
       delete updated[key]
       return updated
     })
-  }, [addActivity])
+  }, [addActivity, envOverrides])
 
   // Renew session
   const handleRenewSession = useCallback(async (session: Session) => {
@@ -272,23 +374,31 @@ export default function App() {
     }
   }, [addActivity])
 
-  // Detect clusters for a session
+  // Detect clusters for a session.
+  //
+  // Throws on failure so the calling UI (Clusters screen + detail panels) can
+  // surface the Rust error. Previously this swallowed errors into console.warn
+  // and the UI just showed "No clusters found" even when the IAM role lacked
+  // eks:ListClusters or the region was wrong.
+  //
+  // Also patches `selectedSession` in-place when it matches, so the detail
+  // panel re-renders with the new cluster list (otherwise the detail panel
+  // holds a stale reference from the moment of selection).
   const handleDetectClusters = useCallback(async (session: Session) => {
-    try {
-      const found = await api.listEksClusters(
-        session.region,
-        session.accessKeyId,
-        session.secretAccessKey,
-        session.sessionToken,
-      )
-      setSessions(prev => prev.map(s =>
-        s.id === session.id ? { ...s, clusters: found } : s
-      ))
-      if (found.length > 0) {
-        addActivity({ type: 'cluster-activate', title: `${found.length} cluster${found.length !== 1 ? 's' : ''} discovered`, reference: session.accountName })
-      }
-    } catch (err) {
-      console.warn('list_eks_clusters failed (not in Tauri?):', err)
+    const found = await api.listEksClusters(
+      session.region,
+      session.accessKeyId,
+      session.secretAccessKey,
+      session.sessionToken,
+    )
+    setSessions(prev => prev.map(s =>
+      s.id === session.id ? { ...s, clusters: found } : s
+    ))
+    setSelectedSession(prev =>
+      prev && prev.id === session.id ? { ...prev, clusters: found } : prev
+    )
+    if (found.length > 0) {
+      addActivity({ type: 'cluster-activate', title: `${found.length} cluster${found.length !== 1 ? 's' : ''} discovered`, reference: session.accountName })
     }
   }, [addActivity])
 
@@ -299,7 +409,13 @@ export default function App() {
       if (existing) {
         return prev.map(g =>
           g.startUrl === group.startUrl
-            ? { ...g, profiles: [...g.profiles, ...group.profiles.filter(p => !g.profiles.some(ep => ep.name === p.name))] }
+            ? {
+                ...g,
+                // Adopt the new alias if the user typed one — lets the user
+                // rename an existing connection by re-running the wizard.
+                alias: group.alias ?? g.alias,
+                profiles: [...g.profiles, ...group.profiles.filter(p => !g.profiles.some(ep => ep.name === p.name))],
+              }
             : g
         )
       }
@@ -336,6 +452,11 @@ export default function App() {
             onSelectSession={setSelectedSession}
             onStartSession={handleStartSession}
             onAddConnection={handleAddConnection}
+            onDetectClusters={handleDetectClusters}
+            favorites={favorites}
+            onToggleFavorite={toggleFavorite}
+            envOverrides={envOverrides}
+            onSetEnvOverride={setEnvOverride}
           />
         )
       case 'sessions':
@@ -383,6 +504,7 @@ export default function App() {
         onRenewSession={handleRenewSession}
         onOpenConsole={handleOpenConsole}
         onActivateCluster={handleActivateCluster}
+        onDetectClusters={handleDetectClusters}
         activeCluster={activeCluster}
         activity={activity}
       >

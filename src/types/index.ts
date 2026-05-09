@@ -7,6 +7,9 @@ export interface SsoGroup {
   startUrl: string
   ssoRegion: string
   profiles: Profile[]
+  // User-given alias from the Add Connection wizard. Used as the section
+  // header in Accounts view; falls back to the startUrl hostname if missing.
+  alias?: string
 }
 export interface Profile {
   name: string

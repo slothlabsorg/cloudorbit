@@ -20,6 +20,82 @@ export function EnvBadge({ env }: { env: EnvType }) {
   )
 }
 
+/**
+ * Clickable env badge with a popover menu for manual tagging. Used in lists
+ * where `detectEnv(accountName)` returned the wrong thing — e.g. account
+ * names that don't encode the environment (`acme-root`, `platform`, …).
+ *
+ * `overridden` renders a small dot on the badge so the user sees the tag
+ * came from them, not auto-detection. `onReset` clears the override.
+ */
+export function EnvEditableBadge({ env, overridden, onChange, onReset }: {
+  env: EnvType
+  overridden?: boolean
+  onChange: (next: EnvType) => void
+  onReset?: () => void
+}) {
+  const [open, setOpen] = React.useState(false)
+  const cfg = envConfig[env]
+  const ref = React.useRef<HTMLSpanElement>(null)
+
+  React.useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [open])
+
+  const OPTIONS: EnvType[] = ['prod', 'staging', 'dev', 'sandbox', 'unknown']
+
+  return (
+    <span ref={ref} className="relative inline-flex">
+      <button
+        type="button"
+        onClick={e => { e.stopPropagation(); setOpen(o => !o) }}
+        className={`relative inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-medium tracking-wider cursor-pointer hover:brightness-125 transition ${cfg.className}`}
+        title={overridden ? 'Manually tagged — click to change' : 'Auto-detected — click to override'}
+      >
+        {cfg.label}
+        {overridden && <span className="w-1 h-1 rounded-full bg-current opacity-70" />}
+      </button>
+      {open && (
+        <div
+          className="absolute z-50 top-full mt-1 left-0 bg-bg-elevated border border-border rounded-lg shadow-xl py-1 min-w-32"
+          onClick={e => e.stopPropagation()}
+        >
+          {OPTIONS.map(opt => (
+            <button
+              key={opt}
+              onClick={() => { onChange(opt); setOpen(false) }}
+              className={`w-full text-left px-3 py-1 text-[10px] font-mono hover:bg-bg-surface flex items-center justify-between ${opt === env ? 'text-primary' : 'text-text-secondary'}`}
+            >
+              {envConfig[opt].label}
+              {opt === env && (
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M20 6L9 17l-5-5"/>
+                </svg>
+              )}
+            </button>
+          ))}
+          {overridden && onReset && (
+            <>
+              <div className="my-1 border-t border-border-subtle" />
+              <button
+                onClick={() => { onReset(); setOpen(false) }}
+                className="w-full text-left px-3 py-1 text-[10px] text-text-muted hover:bg-bg-surface hover:text-text-primary"
+              >
+                Reset to auto
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </span>
+  )
+}
+
 // ── Method Chip ───────────────────────────────────────────────────────────────
 
 const methodConfig: Record<MethodType, { label: string; className: string }> = {

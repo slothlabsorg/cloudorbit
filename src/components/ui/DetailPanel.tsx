@@ -15,6 +15,7 @@ interface DetailPanelProps {
   onRenew: (session: Session) => void
   onConsole: (session: Session) => void
   onActivateCluster: (cluster: ClusterInfo, session: Session) => void
+  onDetectClusters?: (session: Session) => Promise<void>
 }
 
 function CopyButton({ value }: { value: string }) {
@@ -51,14 +52,24 @@ function InfoRow({ label, value, mono = false }: { label: string; value: string;
   )
 }
 
-export function DetailPanel({ session, clusters, activity, onClose, onRenew, onConsole, onActivateCluster }: DetailPanelProps) {
+export function DetailPanel({ session, clusters, activity, onClose, onRenew, onConsole, onActivateCluster, onDetectClusters }: DetailPanelProps) {
   const { label: expiryLabel, status: expiryStatus } = formatExpiry(session.expiresAt)
   const sessionStatus = expiryStatus === 'expired' ? 'expired' : expiryStatus === 'expiring' ? 'expiring' : 'active'
+  const [detecting, setDetecting] = React.useState(false)
+  const [detectError, setDetectError] = React.useState<string | null>(null)
 
   const sessionClusters = clusters.filter(c =>
     session.clusters?.some(sc => sc.name === c.name) ||
     c.arn.includes(session.accountId)
   )
+
+  const runDetect = async () => {
+    if (!onDetectClusters) return
+    setDetecting(true); setDetectError(null)
+    try { await onDetectClusters(session) }
+    catch (e) { setDetectError(String(e)) }
+    finally { setDetecting(false) }
+  }
 
   const sessionActivity = activity.filter(a =>
     a.reference.includes(session.accountName) || a.reference.includes(session.accountId)
@@ -122,11 +133,29 @@ export function DetailPanel({ session, clusters, activity, onClose, onRenew, onC
         </div>
 
         {/* Clusters */}
-        {sessionClusters.length > 0 && (
-          <div className="px-4 py-3 border-b border-border-subtle">
-            <p className="text-text-muted text-[10px] font-semibold uppercase tracking-wider mb-2">
+        <div className="px-4 py-3 border-b border-border-subtle">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-text-muted text-[10px] font-semibold uppercase tracking-wider">
               EKS Clusters ({sessionClusters.length})
             </p>
+            {onDetectClusters && (
+              <button
+                onClick={runDetect}
+                disabled={detecting}
+                className="text-[10px] text-primary hover:text-blue-300 transition-colors disabled:opacity-50"
+              >
+                {detecting ? 'Detecting…' : sessionClusters.length === 0 ? 'Detect' : 'Refresh'}
+              </button>
+            )}
+          </div>
+          {detectError && (
+            <pre className="mb-2 bg-danger/10 border border-danger/30 rounded-lg px-2 py-1.5 text-danger/90 text-[10px] whitespace-pre-wrap break-words font-mono leading-relaxed">
+              {detectError}
+            </pre>
+          )}
+          {sessionClusters.length === 0 ? (
+            <p className="text-text-muted text-[11px] py-1">No clusters detected yet.</p>
+          ) : (
             <div className="space-y-1.5">
               {sessionClusters.map(cluster => (
                 <div key={cluster.name} className="flex items-center justify-between gap-2 bg-bg-surface rounded-lg px-2.5 py-2">
@@ -146,8 +175,8 @@ export function DetailPanel({ session, clusters, activity, onClose, onRenew, onC
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Recent activity */}
         {sessionActivity.length > 0 && (

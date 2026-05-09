@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import type { Session, SsoGroup, Profile, ClusterInfo, EnvType } from '@/types'
+import type { Session, SsoGroup, Profile, ClusterInfo, EnvType, CustomTag } from '@/types'
 import { EnvBadge, EnvEditableBadge, MethodChip, StatusChip } from '@/components/ui/Badge'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -26,6 +26,9 @@ interface AccountsProps {
   onToggleFavorite: (key: string) => void
   envOverrides: Record<string, EnvType>
   onSetEnvOverride: (startUrl: string, accountId: string, env: EnvType | null) => void
+  customTags: Record<string, CustomTag>
+  onSetCustomTag: (startUrl: string, accountId: string, tag: CustomTag | null) => void
+  onRenameSso?: (startUrl: string, alias: string) => void
 }
 
 function favoriteKey(startUrl: string, accountId: string, roleName: string): string {
@@ -52,6 +55,7 @@ export function Accounts({
   sessions, ssoGroups, isLoading, selectedSession,
   onSelectSession, onStartSession, onAddConnection, onDetectClusters,
   favorites, onToggleFavorite, envOverrides, onSetEnvOverride,
+  customTags, onSetCustomTag, onRenameSso,
 }: AccountsProps) {
   const [filter, setFilter] = useState<FilterType>('all')
   const [search, setSearch] = useState('')
@@ -70,7 +74,7 @@ export function Accounts({
       usedKeys.add(key)
       rows.push({
         key,
-        name: s.accountName,
+        name: s.accountName,  // already the clean account name
         accountId: s.accountId,
         roleName: s.roleName,
         region: s.region,
@@ -78,7 +82,9 @@ export function Accounts({
         environment: s.environment,
         session: s,
         profile: {
-          name: s.accountName, startUrl: s.startUrl, ssoRegion: s.ssoRegion,
+          name: s.accountName,
+          accountName: s.accountName,
+          startUrl: s.startUrl, ssoRegion: s.ssoRegion,
           accountId: s.accountId, roleName: s.roleName, region: s.region,
         },
       })
@@ -89,14 +95,20 @@ export function Accounts({
         const key = `${p.accountId}-${p.roleName}`
         if (usedKeys.has(key)) continue
         usedKeys.add(key)
+        // Accordion header wants the raw account name, not the combined
+        // "account / role" display string. Fall back to stripping the
+        // delimiter for legacy profiles that don't have accountName set.
+        const cleanAccountName = p.accountName
+          ?? p.name.split(' / ')[0]
+          ?? p.name
         rows.push({
           key,
-          name: p.name,
+          name: cleanAccountName,
           accountId: p.accountId,
           roleName: p.roleName,
           region: p.region,
           method: 'sso',
-          environment: detectEnv(p.name),
+          environment: detectEnv(cleanAccountName),
           session: null,
           profile: p,
         })
@@ -133,23 +145,28 @@ export function Accounts({
     const bySso = new Map<string, SsoView>()
     const orphan: AccountRow[] = []
 
-    // Resolve each startUrl to a preferred label: user-given alias first,
-    // then hostname prefix. Derived once up-front so all rows from the same
-    // SSO render under a single consistent header.
+    // Build the SSO section label. We want to show BOTH the directory ID
+    // (from the hostname — e.g. `D-9267d090d7`) and the user-given alias,
+    // joined with a `·`. The directory ID is how IAM Identity Center
+    // identifies the SSO instance; the alias is how the user thinks of it.
+    const buildLabel = (startUrl: string, alias?: string): string => {
+      let host = 'SSO'
+      try { host = new URL(startUrl).hostname.split('.')[0] } catch { /* keep */ }
+      // Uppercase the leading `d-` so directory IDs read as `D-9267d090d7`.
+      const directory = host.replace(/^d-/i, 'D-')
+      const trimmed = (alias ?? '').trim()
+      return trimmed ? `${directory} · ${trimmed}` : directory
+    }
     const ssoLabels = new Map<string, string>()
     for (const g of ssoGroups) {
-      let fallback = 'SSO'
-      try { fallback = new URL(g.startUrl).hostname.split('.')[0] } catch { /* keep */ }
-      ssoLabels.set(g.startUrl, (g.alias && g.alias.trim()) || fallback)
+      ssoLabels.set(g.startUrl, buildLabel(g.startUrl, g.alias))
     }
 
     for (const row of filtered) {
       if (row.method !== 'sso' || !row.accountId) { orphan.push(row); continue }
       const startUrl = row.profile.startUrl
       if (!bySso.has(startUrl)) {
-        let fallback = 'SSO'
-        try { fallback = new URL(startUrl).hostname.split('.')[0] } catch { /* keep default */ }
-        const label = ssoLabels.get(startUrl) ?? fallback
+        const label = ssoLabels.get(startUrl) ?? buildLabel(startUrl)
         bySso.set(startUrl, { startUrl, label, accounts: [] })
       }
       const sso = bySso.get(startUrl)!
@@ -283,8 +300,12 @@ export function Accounts({
                   onToggleFavorite={onToggleFavorite}
                   envOverrides={envOverrides}
                   onSetEnvOverride={onSetEnvOverride}
+                  customTags={customTags}
+                  onSetCustomTag={onSetCustomTag}
                   onRowClick={handleRowClick}
                   onStart={handleStart}
+                  onRename={onRenameSso ? (alias: string) => onRenameSso(sso.startUrl, alias) : undefined}
+                  currentAlias={ssoGroups.find(g => g.startUrl === sso.startUrl)?.alias ?? ''}
                 />
               ))}
               {grouped.orphan.length > 0 && (
@@ -335,28 +356,78 @@ interface SsoSectionProps {
   onToggleFavorite: (key: string) => void
   envOverrides: Record<string, EnvType>
   onSetEnvOverride: (startUrl: string, accountId: string, env: EnvType | null) => void
+  customTags: Record<string, CustomTag>
+  onSetCustomTag: (startUrl: string, accountId: string, tag: CustomTag | null) => void
   onRowClick: (row: AccountRow) => void
   onStart: (row: AccountRow) => void
+  onRename?: (alias: string) => void
+  currentAlias?: string
 }
 
-function SsoSection({ sso, selectedAccountKey, startingKey, favorites, onToggleFavorite, envOverrides, onSetEnvOverride, onRowClick, onStart }: SsoSectionProps) {
+function SsoSection({ sso, selectedAccountKey, startingKey, favorites, onToggleFavorite, envOverrides, onSetEnvOverride, customTags, onSetCustomTag, onRowClick, onStart, onRename, currentAlias }: SsoSectionProps) {
   const [collapsed, setCollapsed] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [draft, setDraft] = useState(currentAlias ?? '')
   const roleCount = sso.accounts.reduce((n, a) => n + a.rows.length, 0)
+
+  useEffect(() => {
+    if (!renaming) setDraft(currentAlias ?? '')
+  }, [currentAlias, renaming])
+
+  const commit = () => {
+    if (onRename) onRename(draft)
+    setRenaming(false)
+  }
 
   return (
     <div className="mb-4">
-      <button
-        onClick={() => setCollapsed(c => !c)}
-        className="w-full flex items-center gap-2 px-5 py-2 bg-bg-elevated border-b border-border-subtle sticky top-0 z-10 text-left hover:bg-bg-surface transition-colors"
-      >
-        <svg className={`w-3 h-3 text-text-muted transition-transform ${collapsed ? '' : 'rotate-90'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-          <polyline points="9 6 15 12 9 18"/>
-        </svg>
-        <span className="text-xs font-semibold text-text-primary uppercase tracking-wider">{sso.label}</span>
+      <div className="w-full flex items-center gap-2 px-5 py-2 bg-bg-elevated border-b border-border-subtle sticky top-0 z-10">
+        <button
+          onClick={() => setCollapsed(c => !c)}
+          className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+        >
+          <svg className={`w-3 h-3 text-text-muted transition-transform ${collapsed ? '' : 'rotate-90'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <polyline points="9 6 15 12 9 18"/>
+          </svg>
+          <span className="text-xs font-semibold text-text-primary uppercase tracking-wider">{sso.label}</span>
+        </button>
         <span className="text-[10px] text-text-muted font-mono">
           {sso.accounts.length} account{sso.accounts.length !== 1 ? 's' : ''} · {roleCount} role{roleCount !== 1 ? 's' : ''}
         </span>
-      </button>
+        {onRename && !renaming && (
+          <button
+            onClick={() => setRenaming(true)}
+            className="text-[10px] text-text-muted hover:text-primary transition-colors ml-1"
+            title="Rename connection (set alias)"
+          >
+            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
+            </svg>
+          </button>
+        )}
+        {renaming && (
+          <div className="flex items-center gap-1 ml-1">
+            <input
+              autoFocus
+              type="text"
+              value={draft}
+              placeholder="Alias (e.g. Polaris)"
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') commit()
+                if (e.key === 'Escape') { setDraft(currentAlias ?? ''); setRenaming(false) }
+              }}
+              className="text-[11px] bg-bg-surface border border-border rounded px-2 py-0.5 outline-none focus:border-primary w-32"
+            />
+            <button onClick={commit} className="text-[10px] text-primary hover:text-primary/80 px-1" title="Save">✓</button>
+            <button
+              onClick={() => { setDraft(currentAlias ?? ''); setRenaming(false) }}
+              className="text-[10px] text-text-muted hover:text-text-primary px-1"
+              title="Cancel"
+            >✕</button>
+          </div>
+        )}
+      </div>
 
       {!collapsed && (
         <div className="px-2">
@@ -371,6 +442,8 @@ function SsoSection({ sso, selectedAccountKey, startingKey, favorites, onToggleF
               onToggleFavorite={onToggleFavorite}
               envOverrides={envOverrides}
               onSetEnvOverride={onSetEnvOverride}
+              customTags={customTags}
+              onSetCustomTag={onSetCustomTag}
               onRowClick={onRowClick}
               onStart={onStart}
             />
@@ -383,7 +456,7 @@ function SsoSection({ sso, selectedAccountKey, startingKey, favorites, onToggleF
 
 function AccountAccordion({
   sso, account, selectedAccountKey, startingKey, favorites, onToggleFavorite,
-  envOverrides, onSetEnvOverride, onRowClick, onStart,
+  envOverrides, onSetEnvOverride, customTags, onSetCustomTag, onRowClick, onStart,
 }: {
   sso: { startUrl: string; label: string }
   account: { accountId: string; accountName: string; rows: AccountRow[] }
@@ -393,6 +466,8 @@ function AccountAccordion({
   onToggleFavorite: (key: string) => void
   envOverrides: Record<string, EnvType>
   onSetEnvOverride: (startUrl: string, accountId: string, env: EnvType | null) => void
+  customTags: Record<string, CustomTag>
+  onSetCustomTag: (startUrl: string, accountId: string, tag: CustomTag | null) => void
   onRowClick: (row: AccountRow) => void
   onStart: (row: AccountRow) => void
 }) {
@@ -411,8 +486,9 @@ function AccountAccordion({
   // Account-level env — override first, then fall back to the auto-detected
   // value from the account name. The dot on the badge signals overridden.
   const overrideKey = envOverrideKey(sso.startUrl, account.accountId)
+  const customTag = customTags[overrideKey]
   const env = envOverrides[overrideKey] ?? detectEnv(account.accountName)
-  const overridden = overrideKey in envOverrides
+  const overridden = !!customTag || overrideKey in envOverrides
 
   // Favorites first within the account.
   const sortedRows = [...account.rows].sort((a, b) => {
@@ -435,9 +511,22 @@ function AccountAccordion({
         </svg>
         <EnvEditableBadge
           env={env}
+          custom={customTag}
           overridden={overridden}
-          onChange={next => onSetEnvOverride(sso.startUrl, account.accountId, next)}
-          onReset={() => onSetEnvOverride(sso.startUrl, account.accountId, null)}
+          onChange={next => {
+            // Selecting a canonical env clears any custom tag so the two
+            // override channels can't fight each other.
+            onSetCustomTag(sso.startUrl, account.accountId, null)
+            onSetEnvOverride(sso.startUrl, account.accountId, next)
+          }}
+          onSetCustom={tag => {
+            onSetEnvOverride(sso.startUrl, account.accountId, null)
+            onSetCustomTag(sso.startUrl, account.accountId, tag)
+          }}
+          onReset={() => {
+            onSetCustomTag(sso.startUrl, account.accountId, null)
+            onSetEnvOverride(sso.startUrl, account.accountId, null)
+          }}
         />
         <span className="text-sm font-medium text-text-primary truncate flex-1 min-w-0">{account.accountName}</span>
         <span className="text-[10px] text-text-muted font-mono flex-shrink-0">{maskId(account.accountId)}</span>

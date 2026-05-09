@@ -1,9 +1,27 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Toggle } from '@/components/ui/Toggle'
 import { Callout } from '@/components/ui/Callout'
 import Button from '@/components/ui/Button'
+import pkg from '../../package.json'
 
 type SettingsSection = 'appearance' | 'aws' | 'kubernetes' | 'security'
+
+// Persisted useState — writes to localStorage on change, reads on mount.
+// Every Settings toggle was previously losing its value when the component
+// unmounted (e.g. navigating to Orbit and back), because state was held
+// only in React. Now each setting round-trips through localStorage.
+function usePersistedState<T>(key: string, initial: T): [T, React.Dispatch<React.SetStateAction<T>>] {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const raw = localStorage.getItem(key)
+      return raw !== null ? (JSON.parse(raw) as T) : initial
+    } catch { return initial }
+  })
+  useEffect(() => {
+    try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* quota — ignore */ }
+  }, [key, value])
+  return [value, setValue]
+}
 
 interface SettingsProps {}
 
@@ -52,9 +70,10 @@ const navItems: { id: SettingsSection; label: string; icon: React.ReactNode }[] 
 // ── Section components ────────────────────────────────────────────────────────
 
 function AppearanceSection() {
-  const [compactMode, setCompactMode] = useState(false)
-  const [animationsEnabled, setAnimationsEnabled] = useState(true)
-  const [showAccountIds, setShowAccountIds] = useState(false)
+  const [compactMode, setCompactMode] = usePersistedState('cloudorbit.settings.compactMode', false)
+  const [animationsEnabled, setAnimationsEnabled] = usePersistedState('cloudorbit.settings.animations', true)
+  const [showAccountIds, setShowAccountIds] = usePersistedState('cloudorbit.settings.showAccountIds', false)
+  const [startAtLogin, setStartAtLogin] = usePersistedState('cloudorbit.settings.startAtLogin', false)
 
   return (
     <div className="space-y-6">
@@ -87,13 +106,14 @@ function AppearanceSection() {
         <div className="space-y-3">
           <SettingRow
             label="Start at Login"
-            description="Launch CloudOrbit when you log in"
+            description="Launch CloudOrbit when you log in (OS-level autostart is not yet wired up — preference stored but requires the autostart plugin to take effect)"
           >
-            <Toggle checked={false} onChange={() => {}} />
+            <Toggle checked={startAtLogin} onChange={setStartAtLogin} />
           </SettingRow>
           <SettingRow
             label="Start Minimized"
-            description="Open to menu bar on launch"
+            description="Open to menu bar on launch — coming soon"
+            disabled
           >
             <Toggle checked={false} onChange={() => {}} disabled />
           </SettingRow>
@@ -104,9 +124,9 @@ function AppearanceSection() {
 }
 
 function AwsSection() {
-  const [defaultRegion, setDefaultRegion] = useState('us-east-1')
-  const [autoWriteCredentials, setAutoWriteCredentials] = useState(true)
-  const [sessionDuration, setSessionDuration] = useState('8')
+  const [defaultRegion, setDefaultRegion] = usePersistedState('cloudorbit.settings.defaultRegion', 'us-east-1')
+  const [autoWriteCredentials, setAutoWriteCredentials] = usePersistedState('cloudorbit.settings.autoWriteCreds', true)
+  const [sessionDuration, setSessionDuration] = usePersistedState('cloudorbit.settings.sessionDuration', '8')
 
   const regions = [
     'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2',
@@ -166,9 +186,9 @@ function AwsSection() {
 }
 
 function KubernetesSection() {
-  const [prodConfirmation, setProdConfirmation] = useState(true)
-  const [autoDetectClusters, setAutoDetectClusters] = useState(false)
-  const [backupKubeconfig, setBackupKubeconfig] = useState(true)
+  const [prodConfirmation, setProdConfirmation] = usePersistedState('cloudorbit.settings.prodConfirmation', true)
+  const [autoDetectClusters, setAutoDetectClusters] = usePersistedState('cloudorbit.settings.autoDetectClusters', false)
+  const [backupKubeconfig, setBackupKubeconfig] = usePersistedState('cloudorbit.settings.backupKubeconfig', true)
 
   return (
     <div className="space-y-6">
@@ -211,8 +231,8 @@ function KubernetesSection() {
 }
 
 function SecuritySection() {
-  const [useKeychain, setUseKeychain] = useState(true)
-  const [clearOnLock, setClearOnLock] = useState(false)
+  const [useKeychain, setUseKeychain] = usePersistedState('cloudorbit.settings.useKeychain', true)
+  const [clearOnLock, setClearOnLock] = usePersistedState('cloudorbit.settings.clearOnLock', false)
 
   return (
     <div className="space-y-6">
@@ -254,7 +274,7 @@ function SecuritySection() {
         <div className="bg-bg-elevated border border-border rounded-xl p-4 space-y-2">
           <div className="flex justify-between text-xs">
             <span className="text-text-muted">Version</span>
-            <span className="text-text-secondary font-mono">0.1.0</span>
+            <span className="text-text-secondary font-mono">{pkg.version}</span>
           </div>
           <div className="flex justify-between text-xs">
             <span className="text-text-muted">Tauri</span>
@@ -295,7 +315,7 @@ const sectionComponents: Record<SettingsSection, React.ReactNode> = {
 }
 
 export function Settings(_props: SettingsProps) {
-  const [activeSection, setActiveSection] = useState<SettingsSection>('appearance')
+  const [activeSection, setActiveSection] = usePersistedState<SettingsSection>('cloudorbit.settings.activeSection', 'appearance')
 
   return (
     <div className="flex h-full overflow-hidden">

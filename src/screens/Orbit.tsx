@@ -1,640 +1,629 @@
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import type { Session, SsoGroup, Profile, Screen } from '@/types'
-import { formatExpiry, detectEnv } from '@/lib/time'
-import { EnvBadge, MethodChip, StatusChip } from '@/components/ui/Badge'
-import { StatusDot } from '@/components/ui/StatusDot'
-import { SkeletonRow } from '@/components/ui/Skeleton'
+import type { Session, SsoGroup, Profile, Screen, ClusterInfo, ActivityEvent, EnvType } from '@/types'
+import { formatExpiry, detectEnv, envOverrideKey } from '@/lib/time'
+import { EnvBadge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { Modal } from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
-import { Callout } from '@/components/ui/Callout'
 
-type FilterType = 'all' | 'active' | 'expiring' | 'favorites'
+// ── Orbit — Dashboard ────────────────────────────────────────────────────────
+// The home screen. Top-of-fold is a stats band + a live session-timeline
+// chart; below is a tabbed view of Active / Favorites / Recent role cards,
+// each with quick actions (start/renew, console, copy creds, detect EKS).
+//
+// The existing Orbit was a flat table that duplicated what Accounts now
+// shows much better. This file replaces it with a dashboard feel.
 
 interface OrbitProps {
   sessions: Session[]
   ssoGroups: SsoGroup[]
   isLoading: boolean
+  selectedSession: Session | null
+  activity: ActivityEvent[]
+  favorites: Set<string>
+  envOverrides: Record<string, EnvType>
   onSelectSession: (session: Session) => void
   onStartSession: (profile: Profile) => Promise<void>
-  selectedSession: Session | null
+  onRenewSession: (session: Session) => Promise<void>
+  onOpenConsole: (session: Session) => Promise<void>
+  onDetectClusters?: (session: Session) => Promise<void>
+  onActivateCluster?: (cluster: ClusterInfo, session: Session) => Promise<void>
+  onToggleFavorite: (key: string) => void
   onAddConnection?: () => void
   onNavigate?: (screen: Screen) => void
 }
 
-interface SsoLoginState {
-  status: 'idle' | 'starting' | 'waiting' | 'polling' | 'done' | 'error'
-  clientId?: string
-  clientSecret?: string
-  deviceCode?: string
-  verificationUri?: string
-  error?: string
-  interval?: number
+function favKey(startUrl: string, accountId: string, roleName: string): string {
+  return `${startUrl}|${accountId}|${roleName}`
 }
 
-interface RowProfile {
-  type: 'session'
-  session: Session
+function maskId(id: string): string {
+  return id.length <= 4 ? id : `••••${id.slice(-4)}`
 }
 
-interface RowIdle {
-  type: 'idle'
-  profile: Profile
-}
-
-type Row = RowProfile | RowIdle
-
-function maskAccountId(id: string): string {
-  if (id.length <= 4) return id
-  return `••••${id.slice(-4)}`
-}
-
-function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
+// ── Top stats band ───────────────────────────────────────────────────────────
+function StatTile({ label, value, tone, onClick }: { label: string; value: number | string; tone: string; onClick?: () => void }) {
   return (
-    <motion.div
-      className="bg-bg-elevated border border-border rounded-xl px-4 py-3 flex items-center justify-between"
+    <motion.button
+      onClick={onClick}
+      disabled={!onClick}
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
+      transition={{ duration: 0.25 }}
+      className={`flex-1 min-w-0 flex flex-col items-start gap-1 bg-bg-elevated border border-border rounded-xl px-4 py-3 transition ${onClick ? 'hover:border-primary/40 cursor-pointer text-left' : 'cursor-default'}`}
     >
-      <span className="text-text-secondary text-xs">{label}</span>
-      <span className={`text-2xl font-display font-bold ${color}`}>{value}</span>
+      <span className="text-[10px] text-text-muted font-semibold uppercase tracking-wider">{label}</span>
+      <span className={`text-2xl font-display font-bold ${tone}`}>{value}</span>
+    </motion.button>
+  )
+}
+
+// ── Session timeline chart ───────────────────────────────────────────────────
+// Horizontal bars — one per active session — showing elapsed vs remaining
+// against a common scale (longest remaining session = 100%). Gives an
+// at-a-glance view of which session expires next and how much life it has.
+function SessionTimeline({ sessions, now }: { sessions: Session[]; now: number }) {
+  const active = sessions.filter(s => new Date(s.expiresAt).getTime() > now)
+  if (active.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-24 bg-bg-elevated border border-border rounded-xl">
+        <p className="text-text-muted text-xs">No active sessions</p>
+      </div>
+    )
+  }
+  // Assumption: default session length is 1h (SSO STS). Falls back to
+  // `expiresAt - (expiresAt - now) * 2` when we don't track the start time.
+  const DEFAULT_LIFETIME_MS = 3600_000
+  const maxRemaining = Math.max(...active.map(s => new Date(s.expiresAt).getTime() - now))
+  const scaleMs = Math.max(maxRemaining, DEFAULT_LIFETIME_MS)
+
+  return (
+    <div className="bg-bg-elevated border border-border rounded-xl px-4 py-3">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[10px] text-text-muted font-semibold uppercase tracking-wider">
+          Session timeline
+        </p>
+        <p className="text-[10px] text-text-muted font-mono">{active.length} active</p>
+      </div>
+      <div className="space-y-2">
+        {active
+          .sort((a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime())
+          .map(s => {
+            const remainMs = new Date(s.expiresAt).getTime() - now
+            const remainMin = Math.max(0, Math.round(remainMs / 60000))
+            const pct = Math.max(2, Math.min(100, (remainMs / scaleMs) * 100))
+            const warn = remainMs <= 15 * 60000
+            const crit = remainMs <= 5  * 60000
+            return (
+              <div key={s.id} className="grid items-center gap-3" style={{ gridTemplateColumns: '1fr 160px 60px' }}>
+                <div className="min-w-0 flex items-center gap-2">
+                  <EnvBadge env={s.environment} />
+                  <span className="text-xs text-text-primary truncate">{s.accountName}</span>
+                  <span className="text-[10px] text-text-muted font-mono truncate">/ {s.roleName}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-bg-surface overflow-hidden">
+                  <motion.div
+                    initial={{ width: 0 }}
+                    animate={{ width: `${pct}%` }}
+                    transition={{ duration: 0.5, ease: 'easeOut' }}
+                    className={`h-full ${crit ? 'bg-danger' : warn ? 'bg-warning' : 'bg-success'}`}
+                  />
+                </div>
+                <span className={`text-[11px] font-mono text-right ${crit ? 'text-danger' : warn ? 'text-warning' : 'text-text-muted'}`}>
+                  {remainMin}m
+                </span>
+              </div>
+            )
+          })}
+      </div>
+    </div>
+  )
+}
+
+// ── Role card ────────────────────────────────────────────────────────────────
+interface RoleCardInput {
+  profile: Profile
+  accountName: string
+  session: Session | null
+  env: EnvType
+  envOverridden: boolean
+  favorite: boolean
+}
+
+function RoleCard({
+  input, isStarting, isRenewing, isDetecting,
+  onStart, onRenew, onConsole, onCopyCreds, onDetect, onSelect, onToggleFavorite,
+}: {
+  input: RoleCardInput
+  isStarting: boolean
+  isRenewing: boolean
+  isDetecting: boolean
+  onStart: () => void
+  onRenew: () => void
+  onConsole: () => void
+  onCopyCreds: () => void
+  onDetect: () => void
+  onSelect: () => void
+  onToggleFavorite: () => void
+}) {
+  const { profile, accountName, session, env, favorite } = input
+  const now = Date.now()
+  const expired = session && new Date(session.expiresAt).getTime() <= now
+  const remainMs = session ? new Date(session.expiresAt).getTime() - now : 0
+  const remainMin = session && remainMs > 0 ? Math.round(remainMs / 60000) : 0
+  const warn = !!session && !expired && remainMs <= 15 * 60000
+  const crit = !!session && !expired && remainMs <= 5  * 60000
+  const pct = session && !expired
+    ? Math.max(2, Math.min(100, (remainMs / 3600000) * 100))
+    : 0
+  const active = !!session && !expired
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+      onClick={() => session && onSelect()}
+      className={`flex flex-col bg-bg-elevated border rounded-xl overflow-hidden transition-colors ${
+        active ? 'border-success/40 hover:border-success/60' : 'border-border hover:border-primary/40'
+      } ${session ? 'cursor-pointer' : ''}`}
+    >
+      {/* Header */}
+      <div className="flex items-start gap-2 px-4 pt-3">
+        <EnvBadge env={env} />
+        <div className="flex-1 min-w-0">
+          <p className="text-text-primary text-sm font-semibold truncate">{accountName}</p>
+          <p className="text-text-muted text-[11px] font-mono truncate">{profile.roleName}</p>
+        </div>
+        <button
+          onClick={e => { e.stopPropagation(); onToggleFavorite() }}
+          className={`rounded p-0.5 transition-colors ${favorite ? 'text-warning' : 'text-text-muted hover:text-warning'}`}
+          title={favorite ? 'Remove from favorites' : 'Add to favorites'}
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill={favorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
+            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+          </svg>
+        </button>
+      </div>
+
+      {/* Meta */}
+      <div className="flex items-center gap-3 px-4 pt-1.5 pb-2 text-[11px] text-text-muted font-mono">
+        <span>{profile.accountId ? maskId(profile.accountId) : '—'}</span>
+        <span>{profile.region}</span>
+      </div>
+
+      {/* Status strip */}
+      <div className="px-4 pb-2">
+        {active ? (
+          <>
+            <div className="flex items-center justify-between mb-1">
+              <span className="flex items-center gap-1.5 text-[11px]">
+                <span className={`w-1.5 h-1.5 rounded-full ${crit ? 'bg-danger' : warn ? 'bg-warning' : 'bg-success'}`} />
+                <span className={crit ? 'text-danger' : warn ? 'text-warning' : 'text-success'}>
+                  {warn || crit ? 'Expiring' : 'Active'}
+                </span>
+              </span>
+              <span className={`text-[11px] font-mono ${crit ? 'text-danger' : warn ? 'text-warning' : 'text-text-secondary'}`}>
+                {remainMin}m left
+              </span>
+            </div>
+            <div className="h-1 rounded-full bg-bg-surface overflow-hidden">
+              <div className={`h-full transition-all ${crit ? 'bg-danger' : warn ? 'bg-warning' : 'bg-success'}`}
+                style={{ width: `${pct}%` }} />
+            </div>
+          </>
+        ) : expired ? (
+          <div className="flex items-center gap-1.5 text-[11px] text-danger">
+            <span className="w-1.5 h-1.5 rounded-full bg-danger" />
+            <span>Expired</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 text-[11px] text-text-muted">
+            <span className="w-1.5 h-1.5 rounded-full bg-text-muted/40" />
+            <span>Idle</span>
+          </div>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-1 px-3 pb-3 pt-1 border-t border-border-subtle">
+        {!active ? (
+          <Button
+            variant="primary" size="sm"
+            loading={isStarting}
+            className="flex-1 py-1 text-[11px]"
+            onClick={e => { e.stopPropagation(); onStart() }}
+          >
+            Start session
+          </Button>
+        ) : (
+          <>
+            <Button
+              variant="secondary" size="sm"
+              loading={isRenewing}
+              className="flex-1 py-1 text-[11px]"
+              onClick={e => { e.stopPropagation(); onRenew() }}
+              title="Renew — re-request credentials"
+            >
+              Renew
+            </Button>
+            <IconButton
+              onClick={e => { e.stopPropagation(); onConsole() }}
+              title="Open AWS Console"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
+                <polyline points="15 3 21 3 21 9"/>
+                <line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+            </IconButton>
+            <IconButton
+              onClick={e => { e.stopPropagation(); onCopyCreds() }}
+              title="Copy credentials (export AWS_ACCESS_KEY_ID=...)"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="9" y="9" width="13" height="13" rx="2"/>
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+              </svg>
+            </IconButton>
+            <IconButton
+              onClick={e => { e.stopPropagation(); onDetect() }}
+              disabled={isDetecting}
+              title="Detect EKS clusters"
+            >
+              {isDetecting ? (
+                <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 12a9 9 0 11-6.22-8.56"/>
+                </svg>
+              ) : (
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="3"/>
+                  <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>
+                </svg>
+              )}
+            </IconButton>
+          </>
+        )}
+      </div>
+
+      {/* Cluster peek when detected */}
+      {active && session && session.clusters && session.clusters.length > 0 && (
+        <div className="px-3 pb-3">
+          <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">
+            {session.clusters.length} cluster{session.clusters.length !== 1 ? 's' : ''}
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {session.clusters.slice(0, 3).map(c => (
+              <span key={c.name} className="text-[10px] font-mono bg-bg-surface border border-border-subtle rounded px-1.5 py-0.5 text-text-secondary truncate max-w-[120px]">
+                {c.name}
+              </span>
+            ))}
+            {session.clusters.length > 3 && (
+              <span className="text-[10px] text-text-muted">+{session.clusters.length - 3}</span>
+            )}
+          </div>
+        </div>
+      )}
     </motion.div>
   )
 }
 
-export function Orbit({ sessions, ssoGroups, isLoading, onSelectSession, onStartSession, selectedSession, onAddConnection, onNavigate }: OrbitProps) {
-  const [filter, setFilter] = useState<FilterType>('all')
-  const [loginModal, setLoginModal] = useState<{ profile: Profile; state: SsoLoginState } | null>(null)
-  const [startingProfile, setStartingProfile] = useState<string | null>(null)
-  const [supportBannerDismissed, setSupportBannerDismissed] = useState(
-    () => localStorage.getItem('cloudorbit:support-banner-dismissed') === '1'
+function IconButton({ onClick, title, children, disabled }: {
+  onClick: (e: React.MouseEvent) => void
+  title: string
+  children: React.ReactNode
+  disabled?: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="w-7 h-7 rounded-lg flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-surface border border-border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      {children}
+    </button>
   )
+}
 
-  const dismissSupportBanner = useCallback(() => {
-    localStorage.setItem('cloudorbit:support-banner-dismissed', '1')
-    setSupportBannerDismissed(true)
+// ── Main component ───────────────────────────────────────────────────────────
+type Tab = 'active' | 'favorites' | 'recent'
+
+export function Orbit({
+  sessions, ssoGroups, isLoading, selectedSession, activity,
+  favorites, envOverrides,
+  onSelectSession, onStartSession, onRenewSession, onOpenConsole,
+  onDetectClusters, onToggleFavorite, onAddConnection, onNavigate,
+}: OrbitProps) {
+  const [tab, setTab] = useState<Tab>('active')
+  const [starting, setStarting] = useState<string | null>(null)
+  const [renewing, setRenewing] = useState<string | null>(null)
+  const [detecting, setDetecting] = useState<string | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  // Live clock — drives countdowns so timeline + cards tick every 15s.
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const h = setInterval(() => setNow(Date.now()), 15000)
+    return () => clearInterval(h)
   }, [])
 
-  // Build rows: active sessions + idle profiles (profiles with no active session)
-  const rows: Row[] = React.useMemo(() => {
-    const allRows: Row[] = sessions.map(s => ({ type: 'session', session: s }))
-    // Add idle profiles not covered by active sessions
+  // Build a canonical list of RoleCardInput entries (one per account×role
+  // across every SSO), merged with sessions when one exists.
+  const allCards: RoleCardInput[] = useMemo(() => {
+    const out: RoleCardInput[] = []
+    const seen = new Set<string>()
+
+    const addFromProfile = (profile: Profile, session: Session | null) => {
+      if (!profile.accountId || !profile.roleName) return
+      const key = `${profile.accountId}-${profile.roleName}`
+      if (seen.has(key)) return
+      seen.add(key)
+      const accountName = profile.accountName ?? profile.name.split(' / ')[0] ?? profile.name
+      const overrideKey = envOverrideKey(profile.startUrl, profile.accountId)
+      const env = envOverrides[overrideKey] ?? detectEnv(accountName)
+      out.push({
+        profile,
+        accountName,
+        session,
+        env,
+        envOverridden: overrideKey in envOverrides,
+        favorite: favorites.has(favKey(profile.startUrl, profile.accountId, profile.roleName)),
+      })
+    }
+
+    // Active sessions first
+    for (const s of sessions) {
+      addFromProfile({
+        name: s.accountName,
+        accountName: s.accountName,
+        startUrl: s.startUrl,
+        ssoRegion: s.ssoRegion,
+        accountId: s.accountId,
+        roleName: s.roleName,
+        region: s.region,
+      }, s)
+    }
+
+    // Then idle profiles
     for (const group of ssoGroups) {
-      for (const profile of group.profiles) {
-        if (!profile.accountId || !profile.roleName) continue
-        const hasSession = sessions.some(
-          s => s.accountId === profile.accountId && s.roleName === profile.roleName
-        )
-        if (!hasSession) {
-          allRows.push({ type: 'idle', profile })
-        }
-      }
+      for (const p of group.profiles) addFromProfile(p, null)
     }
-    return allRows
-  }, [sessions, ssoGroups])
 
-  const filtered = React.useMemo(() => {
-    return rows.filter(row => {
-      if (filter === 'all') return true
-      if (filter === 'favorites') {
-        return row.type === 'session' && row.session.isFavorite
-      }
-      if (filter === 'active') {
-        if (row.type === 'idle') return false
-        const diffMs = new Date(row.session.expiresAt).getTime() - Date.now()
-        return diffMs > 30 * 60000
-      }
-      if (filter === 'expiring') {
-        if (row.type === 'idle') return false
-        const diffMs = new Date(row.session.expiresAt).getTime() - Date.now()
-        return diffMs > 0 && diffMs <= 30 * 60000
-      }
-      return true
+    return out
+  }, [sessions, ssoGroups, favorites, envOverrides])
+
+  // Stats
+  const stats = useMemo(() => {
+    const activeSessions = sessions.filter(s => new Date(s.expiresAt).getTime() > now)
+    const expiring = activeSessions.filter(s => new Date(s.expiresAt).getTime() - now <= 15 * 60000)
+    const totalRoles = allCards.length
+    const totalAccounts = new Set(allCards.map(c => c.profile.accountId)).size
+    return {
+      connections: ssoGroups.length,
+      accounts: totalAccounts,
+      roles: totalRoles,
+      active: activeSessions.length,
+      expiring: expiring.length,
+      favorites: allCards.filter(c => c.favorite).length,
+    }
+  }, [sessions, ssoGroups, allCards, now])
+
+  // Tab selection
+  const cardsForTab = useMemo(() => {
+    if (tab === 'active') {
+      return allCards
+        .filter(c => c.session && new Date(c.session.expiresAt).getTime() > now)
+        .sort((a, b) => new Date(a.session!.expiresAt).getTime() - new Date(b.session!.expiresAt).getTime())
+    }
+    if (tab === 'favorites') {
+      return allCards.filter(c => c.favorite).sort((a, b) => a.accountName.localeCompare(b.accountName))
+    }
+    // recent — sessions in the activity log with type=session-start or -renew
+    const refOrder = new Map<string, number>()
+    activity.forEach((ev, i) => {
+      if (ev.type !== 'session-start' && ev.type !== 'session-renew') return
+      if (!refOrder.has(ev.reference)) refOrder.set(ev.reference, i)
     })
-  }, [rows, filter])
+    return allCards
+      .filter(c => c.session)
+      .sort((a, b) => {
+        const ra = refOrder.get(`${a.accountName} / ${a.profile.roleName}`) ?? 999
+        const rb = refOrder.get(`${b.accountName} / ${b.profile.roleName}`) ?? 999
+        return ra - rb
+      })
+      .slice(0, 12)
+  }, [allCards, tab, now, activity])
 
-  const stats = React.useMemo(() => {
-    const now = Date.now()
-    const active = sessions.filter(s => new Date(s.expiresAt).getTime() > now).length
-    const expiring = sessions.filter(s => {
-      const diff = new Date(s.expiresAt).getTime() - now
-      return diff > 0 && diff <= 30 * 60000
-    }).length
-    const favorites = sessions.filter(s => s.isFavorite).length
-    const clusters = sessions.reduce((acc, s) => acc + (s.clusters?.length ?? 0), 0)
-    return { active, expiring, favorites, clusters }
-  }, [sessions])
-
-  const handleRowClick = useCallback((row: Row) => {
-    if (row.type === 'session') {
-      onSelectSession(row.session)
-    } else {
-      handleStartProfile(row.profile)
-    }
-  }, [onSelectSession])
-
-  const handleStartProfile = useCallback(async (profile: Profile) => {
+  // ── Action handlers ────────────────────────────────────────────────────
+  const handleStart = async (profile: Profile) => {
     const key = `${profile.accountId}-${profile.roleName}`
-    setStartingProfile(key)
+    setStarting(key); setActionError(null)
+    try { await onStartSession(profile) }
+    catch (e) { setActionError(String(e)) }
+    finally { setStarting(null) }
+  }
+  const handleRenew = async (session: Session) => {
+    setRenewing(session.id); setActionError(null)
+    try { await onRenewSession(session) }
+    catch (e) { setActionError(String(e)) }
+    finally { setRenewing(null) }
+  }
+  const handleConsole = async (session: Session) => {
+    try { await onOpenConsole(session) } catch (e) { setActionError(String(e)) }
+  }
+  const handleCopyCreds = async (session: Session) => {
+    const text =
+      `export AWS_ACCESS_KEY_ID=${session.accessKeyId}\n` +
+      `export AWS_SECRET_ACCESS_KEY=${session.secretAccessKey}\n` +
+      `export AWS_SESSION_TOKEN=${session.sessionToken}\n` +
+      `export AWS_DEFAULT_REGION=${session.region}\n`
     try {
-      await onStartSession(profile)
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      // If "Not logged in" — show SSO modal
-      if (msg.includes('Not logged in') || msg.includes('not-in-tauri')) {
-        setLoginModal({
-          profile,
-          state: { status: 'starting' },
-        })
-      }
-    } finally {
-      setStartingProfile(null)
-    }
-  }, [onStartSession])
+      await navigator.clipboard.writeText(text)
+      setCopied(session.id)
+      setTimeout(() => setCopied(c => c === session.id ? null : c), 1800)
+    } catch (e) { setActionError(String(e)) }
+  }
+  const handleDetect = async (session: Session) => {
+    if (!onDetectClusters) return
+    setDetecting(session.id); setActionError(null)
+    try { await onDetectClusters(session) }
+    catch (e) { setActionError(String(e)) }
+    finally { setDetecting(null) }
+  }
+
+  // Empty state when zero connections
+  if (!isLoading && ssoGroups.length === 0) {
+    return (
+      <div className="h-full overflow-y-auto">
+        <EmptyState
+          variant="wave"
+          title="Welcome to CloudOrbit"
+          description="Your cloud access control center. Connect your first cloud account to start managing sessions, roles, and clusters — all in one place."
+          action={onAddConnection ? { label: '+ Add Connection', onClick: onAddConnection } : undefined}
+          secondaryAction={onNavigate ? { label: 'See how it works', onClick: () => onNavigate('docs') } : undefined}
+        />
+      </div>
+    )
+  }
+
+  const tabCount = tab === 'active' ? stats.active : tab === 'favorites' ? stats.favorites : cardsForTab.length
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-border-subtle flex-shrink-0">
         <div>
-          <h1 className="font-display font-bold text-text-primary text-base">Orbit Overview</h1>
-          <p className="text-text-muted text-xs mt-0.5">
-            {rows.length} profile{rows.length !== 1 ? 's' : ''} · {sessions.length} session{sessions.length !== 1 ? 's' : ''}
-          </p>
+          <h1 className="font-display font-bold text-text-primary text-base">Overview</h1>
+          <p className="text-text-muted text-xs mt-0.5">Your cloud access at a glance.</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm">
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
-              <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-            </svg>
-            Refresh
-          </Button>
-          <Button variant="primary" size="sm">
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-            New Session
-          </Button>
+          {onAddConnection && (
+            <Button variant="ghost" size="sm" onClick={onAddConnection}>
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Add Connection
+            </Button>
+          )}
+          {onNavigate && (
+            <Button variant="secondary" size="sm" onClick={() => onNavigate('accounts')}>
+              Manage Accounts →
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-4 gap-3 px-5 py-3 flex-shrink-0">
-        <StatCard label="Active Sessions" value={stats.active} color="text-success" />
-        <StatCard label="Expiring Soon" value={stats.expiring} color="text-warning" />
-        <StatCard label="Favorites" value={stats.favorites} color="text-primary" />
-        <StatCard label="Clusters" value={stats.clusters} color="text-info" />
-      </div>
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+        {/* Stat band */}
+        <div className="flex gap-3">
+          <StatTile label="Connections" value={stats.connections} tone="text-text-primary" onClick={onNavigate ? () => onNavigate('accounts') : undefined} />
+          <StatTile label="Accounts"    value={stats.accounts}    tone="text-text-primary" onClick={onNavigate ? () => onNavigate('accounts') : undefined} />
+          <StatTile label="Active"      value={stats.active}      tone="text-success"      onClick={() => setTab('active')} />
+          <StatTile label="Expiring"    value={stats.expiring}    tone={stats.expiring > 0 ? 'text-warning' : 'text-text-muted'} onClick={() => setTab('active')} />
+          <StatTile label="★ Favorites" value={stats.favorites}   tone="text-warning"      onClick={() => setTab('favorites')} />
+        </div>
 
-      {/* Support banner */}
-      <AnimatePresence>
-        {!supportBannerDismissed && sessions.length > 0 && (
-          <motion.div
-            className="mx-5 mb-2 flex-shrink-0"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-          >
-            <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-rose-500/8 border border-rose-500/20">
-              <svg className="w-4 h-4 text-rose-400 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
-              </svg>
-              <p className="flex-1 text-xs text-text-secondary">
-                CloudOrbit is free &amp; open source.{' '}
-                <button
-                  className="text-rose-400 font-medium hover:underline"
-                  onClick={() => onNavigate?.('support')}
-                >
-                  Support the project →
-                </button>
-              </p>
-              <button
-                onClick={dismissSupportBanner}
-                className="text-text-muted hover:text-text-secondary transition-colors flex-shrink-0"
-                aria-label="Dismiss"
-              >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M18 6L6 18M6 6l12 12"/>
-                </svg>
-              </button>
-            </div>
-          </motion.div>
+        {/* Timeline chart */}
+        <SessionTimeline sessions={sessions} now={now} />
+
+        {/* Error banner */}
+        {actionError && (
+          <div className="bg-danger/10 border border-danger/30 rounded-lg px-3 py-2 flex items-start gap-2">
+            <svg className="w-3.5 h-3.5 text-danger flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <pre className="text-danger/90 text-[11px] whitespace-pre-wrap break-words font-mono leading-relaxed flex-1 min-w-0">{actionError}</pre>
+            <button onClick={() => setActionError(null)} className="text-danger/70 hover:text-danger text-[11px] flex-shrink-0">Dismiss</button>
+          </div>
         )}
-      </AnimatePresence>
 
-      {/* Filter chips */}
-      <div className="flex items-center gap-1.5 px-5 pb-2 flex-shrink-0">
-        {(['all', 'active', 'expiring', 'favorites'] as FilterType[]).map(f => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors capitalize ${
-              filter === f
-                ? 'bg-primary text-bg-base'
-                : 'bg-bg-surface text-text-secondary hover:text-text-primary hover:bg-bg-surface2 border border-border'
-            }`}
-          >
-            {f}
-          </button>
-        ))}
-      </div>
+        {/* Tabs */}
+        <div className="flex items-center gap-0 border-b border-border-subtle">
+          {(['active', 'favorites', 'recent'] as Tab[]).map(t => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium border-b-2 transition-colors capitalize ${
+                tab === t
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              {t}
+              <span className={`px-1 py-0.5 rounded text-[10px] font-mono ${
+                tab === t ? 'bg-primary/20 text-primary' : 'bg-bg-surface text-text-muted'
+              }`}>
+                {t === 'active' ? stats.active : t === 'favorites' ? stats.favorites : tabCount}
+              </span>
+            </button>
+          ))}
+        </div>
 
-      {/* Table */}
-      <div className="flex-1 overflow-y-auto">
-        {isLoading ? (
-          <div>{Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)}</div>
-        ) : filtered.length === 0 && ssoGroups.length === 0 ? (
-          <FirstLaunchState onAddConnection={onAddConnection} />
-        ) : filtered.length === 0 ? (
+        {/* Card grid */}
+        {cardsForTab.length === 0 ? (
           <EmptyState
-            variant="search"
-            title="No matching accounts"
-            description="Try changing the filter above."
+            variant={tab === 'favorites' ? 'wave' : 'sleep'}
+            title={
+              tab === 'active'    ? 'No active sessions' :
+              tab === 'favorites' ? 'No favorites yet' :
+                                    'Nothing recent yet'
+            }
+            description={
+              tab === 'active'    ? 'Start a session from the Favorites tab or the Accounts screen.' :
+              tab === 'favorites' ? 'Star the roles you use most from the Accounts screen and they will pin here.' :
+                                    'Sessions you start will show up here so you can jump back quickly.'
+            }
+            action={tab === 'favorites' && onNavigate ? { label: 'Open Accounts', onClick: () => onNavigate('accounts') } : undefined}
           />
         ) : (
-          <>
-            {/* Table header */}
-            <div className="grid px-4 py-2 text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border-subtle sticky top-0 bg-bg-base z-10"
-              style={{ gridTemplateColumns: '28px 1fr 100px 100px 80px 70px 50px 90px 80px' }}>
-              <div />
-              <div>Account</div>
-              <div>Account ID</div>
-              <div>Role</div>
-              <div>Region</div>
-              <div>Method</div>
-              <div>EKS</div>
-              <div>Expires</div>
-              <div>Status</div>
-            </div>
-
-            {/* Rows */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <AnimatePresence initial={false}>
-              {filtered.map((row, i) => (
-                <OrbitRow
-                  key={row.type === 'session' ? row.session.id : `idle-${row.profile.accountId}-${row.profile.roleName}`}
-                  row={row}
-                  index={i}
-                  isSelected={row.type === 'session' && selectedSession?.id === row.session.id}
-                  isStarting={row.type === 'idle' && startingProfile === `${row.profile.accountId}-${row.profile.roleName}`}
-                  onClick={() => handleRowClick(row)}
-                />
-              ))}
+              {cardsForTab.map(card => {
+                const key = `${card.profile.accountId}-${card.profile.roleName}`
+                return (
+                  <RoleCard
+                    key={key}
+                    input={card}
+                    isStarting={starting === key}
+                    isRenewing={card.session ? renewing === card.session.id : false}
+                    isDetecting={card.session ? detecting === card.session.id : false}
+                    onStart={() => handleStart(card.profile)}
+                    onRenew={() => card.session && handleRenew(card.session)}
+                    onConsole={() => card.session && handleConsole(card.session)}
+                    onCopyCreds={() => card.session && handleCopyCreds(card.session)}
+                    onDetect={() => card.session && handleDetect(card.session)}
+                    onSelect={() => card.session && onSelectSession(card.session)}
+                    onToggleFavorite={() => {
+                      if (card.profile.accountId && card.profile.roleName) {
+                        onToggleFavorite(favKey(card.profile.startUrl, card.profile.accountId, card.profile.roleName))
+                      }
+                    }}
+                  />
+                )
+              })}
             </AnimatePresence>
-          </>
+          </div>
         )}
-      </div>
 
-      {/* SSO Login Modal */}
-      <SsoLoginModal
-        modal={loginModal}
-        onClose={() => setLoginModal(null)}
-        onLoginDone={() => {
-          setLoginModal(null)
-          if (loginModal) handleStartProfile(loginModal.profile)
-        }}
-      />
+        {/* Copy-creds toast — lives briefly at bottom of grid */}
+        <AnimatePresence>
+          {copied && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-success/15 border border-success/40 text-success text-xs font-medium px-3 py-1.5 rounded-full"
+            >
+              Credentials copied to clipboard
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
-  )
-}
-
-function OrbitRow({ row, index, isSelected, isStarting, onClick }: {
-  row: Row
-  index: number
-  isSelected: boolean
-  isStarting: boolean
-  onClick: () => void
-}) {
-  const [hovered, setHovered] = useState(false)
-
-  if (row.type === 'session') {
-    const s = row.session
-    const { label: expiryLabel, status: expiryStatus } = formatExpiry(s.expiresAt)
-    const sessionStatus = expiryStatus === 'expired' ? 'expired' : expiryStatus === 'expiring' ? 'expiring' : 'active'
-    const clusterCount = s.clusters?.length ?? 0
-
-    return (
-      <motion.div
-        initial={{ opacity: 0, x: -4 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: -4 }}
-        transition={{ duration: 0.15, delay: index * 0.02 }}
-        className={`grid items-center px-4 py-2.5 border-b border-border-subtle cursor-pointer transition-colors group ${
-          isSelected ? 'bg-bg-surface2' : hovered ? 'bg-bg-surface' : ''
-        }`}
-        style={{ gridTemplateColumns: '28px 1fr 100px 100px 80px 70px 50px 90px 80px' }}
-        onClick={onClick}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-      >
-        <div className="flex items-center">
-          <StatusDot status={sessionStatus} size="sm" />
-        </div>
-        <div className="flex items-center gap-2 min-w-0">
-          <EnvBadge env={s.environment} />
-          <span className="text-text-primary text-xs font-medium truncate">{s.accountName}</span>
-          {s.isFavorite && (
-            <svg className="w-3 h-3 text-warning flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-            </svg>
-          )}
-        </div>
-        <div className="font-mono text-text-muted text-xs">{maskAccountId(s.accountId)}</div>
-        <div className="text-text-secondary text-xs truncate">{s.roleName}</div>
-        <div className="font-mono text-text-muted text-xs">{s.region}</div>
-        <div><MethodChip method={s.method} /></div>
-        <div className="text-text-secondary text-xs">
-          {clusterCount > 0 ? (
-            <span className="flex items-center gap-1">
-              <svg className="w-3 h-3 text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="3"/>
-              </svg>
-              {clusterCount}
-            </span>
-          ) : (
-            <span className="text-text-muted">—</span>
-          )}
-        </div>
-        <div className={`font-mono text-xs ${
-          expiryStatus === 'expired' ? 'text-danger' :
-          expiryStatus === 'expiring' ? 'text-warning' : 'text-text-secondary'
-        }`}>{expiryLabel}</div>
-        <div className="flex items-center justify-between">
-          <StatusChip status={sessionStatus} />
-          {hovered && (
-            <div className="flex items-center gap-1 ml-1">
-              <button
-                onClick={e => { e.stopPropagation(); onClick() }}
-                className="p-0.5 rounded text-text-muted hover:text-primary transition-colors"
-                title="View details"
-              >
-                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-                </svg>
-              </button>
-            </div>
-          )}
-        </div>
-      </motion.div>
-    )
-  }
-
-  // Idle profile row
-  const p = row.profile
-  const env = detectEnv(p.name)
-  return (
-    <motion.div
-      initial={{ opacity: 0, x: -4 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -4 }}
-      transition={{ duration: 0.15, delay: index * 0.02 }}
-      className={`grid items-center px-4 py-2.5 border-b border-border-subtle cursor-pointer transition-colors group ${
-        hovered ? 'bg-bg-surface' : ''
-      }`}
-      style={{ gridTemplateColumns: '28px 1fr 100px 100px 80px 70px 50px 90px 80px' }}
-      onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      <div className="flex items-center">
-        <StatusDot status="idle" size="sm" />
-      </div>
-      <div className="flex items-center gap-2 min-w-0">
-        <EnvBadge env={env} />
-        <span className="text-text-secondary text-xs font-medium truncate">{p.name || p.accountId || 'Unknown'}</span>
-      </div>
-      <div className="font-mono text-text-muted text-xs">{p.accountId ? maskAccountId(p.accountId) : '—'}</div>
-      <div className="text-text-muted text-xs truncate">{p.roleName ?? '—'}</div>
-      <div className="font-mono text-text-muted text-xs">{p.region}</div>
-      <div><MethodChip method="sso" /></div>
-      <div className="text-text-muted text-xs">—</div>
-      <div className="text-text-muted text-xs">—</div>
-      <div className="flex items-center justify-between">
-        <StatusChip status="idle" />
-        {hovered && (
-          <Button
-            variant="secondary"
-            size="sm"
-            loading={isStarting}
-            className="ml-1 py-0.5 px-1.5 text-[10px]"
-            onClick={e => { e.stopPropagation(); onClick() }}
-          >
-            Start
-          </Button>
-        )}
-      </div>
-    </motion.div>
-  )
-}
-
-// ── First Launch State ─────────────────────────────────────────────────────────
-
-function FirstLaunchState({ onAddConnection }: { onAddConnection?: () => void }) {
-  const [logoFailed, setLogoFailed] = useState(false)
-
-  return (
-    <motion.div
-      className="flex flex-col items-center justify-center py-12 px-8 text-center h-full"
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4 }}
-    >
-      {/* Logo / mascot */}
-      <motion.div
-        animate={{ y: [0, -6, 0] }}
-        transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
-        className="mb-4"
-      >
-        {logoFailed ? (
-          <div className="w-28 h-28 rounded-2xl bg-bg-surface border border-border flex items-center justify-center">
-            <svg className="w-12 h-12 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/>
-              <ellipse cx="12" cy="12" rx="10" ry="4.5" strokeDasharray="3 2"/>
-            </svg>
-          </div>
-        ) : (
-          <img
-            src="/images/logo-cloudorbit.PNG"
-            alt="CloudOrbit"
-            className="w-32 h-auto object-contain drop-shadow-2xl"
-            onError={() => setLogoFailed(true)}
-          />
-        )}
-      </motion.div>
-
-      <h2 className="font-display font-bold text-text-primary text-xl mb-2">Welcome to CloudOrbit</h2>
-      <p className="text-text-secondary text-sm max-w-sm leading-relaxed mb-6">
-        Your cloud access control center. Connect your first cloud account to start managing sessions, roles, and clusters — all in one place.
-      </p>
-
-      {/* Action buttons */}
-      <div className="flex items-center gap-3 mb-8">
-        {onAddConnection && (
-          <Button variant="primary" size="sm" onClick={onAddConnection}>
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-            Add Connection
-          </Button>
-        )}
-        <Button variant="ghost" size="sm">
-          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>
-          </svg>
-          View Docs
-        </Button>
-      </div>
-
-      {/* Supported platforms */}
-      <div className="w-full max-w-xs">
-        <p className="text-text-muted text-[10px] font-semibold uppercase tracking-wider mb-3">Supported platforms</p>
-        <div className="grid grid-cols-3 gap-2">
-          {/* AWS — active */}
-          <div className="flex flex-col items-center gap-2 p-3 bg-bg-surface border border-border rounded-xl">
-            <svg viewBox="0 0 48 48" className="w-7 h-7" fill="none">
-              <path d="M14 28c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2v-8H14v8z" fill="#FF9900"/>
-              <path d="M14 20c0-1.1.9-2 2-2h14v4H14v-2z" fill="#FF9900"/>
-              <path d="M9 34c5.5 2.5 12.5 3.8 15 3.8s9.5-1.3 15-3.8" stroke="#FF9900" strokeWidth="2" strokeLinecap="round" fill="none"/>
-            </svg>
-            <span className="text-[10px] font-medium text-text-primary">AWS</span>
-            <span className="text-[9px] bg-success/15 text-success px-1.5 py-0.5 rounded-full font-medium">Supported</span>
-          </div>
-          {/* GCP — coming soon */}
-          <div className="flex flex-col items-center gap-2 p-3 bg-bg-surface border border-border rounded-xl opacity-60">
-            <svg viewBox="0 0 48 48" className="w-7 h-7" fill="none">
-              <path d="M24 12l9 16H15L24 12z" fill="#EA4335" opacity="0.7"/>
-              <path d="M33 28H15l-6 10h30L33 28z" fill="#4285F4" opacity="0.7"/>
-              <path d="M24 12l9 16-6 10H21L15 28l9-16z" fill="#FBBC04" opacity="0.7"/>
-            </svg>
-            <span className="text-[10px] font-medium text-text-secondary">GCP</span>
-            <span className="text-[9px] bg-bg-overlay text-text-muted px-1.5 py-0.5 rounded-full font-medium border border-border">Soon</span>
-          </div>
-          {/* Azure — coming soon */}
-          <div className="flex flex-col items-center gap-2 p-3 bg-bg-surface border border-border rounded-xl opacity-60">
-            <svg viewBox="0 0 48 48" className="w-7 h-7" fill="none">
-              <path d="M22 10l-10 18 12 2-14 8h20L22 10z" fill="#0078D4" opacity="0.7"/>
-            </svg>
-            <span className="text-[10px] font-medium text-text-secondary">Azure</span>
-            <span className="text-[9px] bg-bg-overlay text-text-muted px-1.5 py-0.5 rounded-full font-medium border border-border">Soon</span>
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  )
-}
-
-// ── SSO Login Modal ────────────────────────────────────────────────────────────
-
-interface SsoLoginModalProps {
-  modal: { profile: Profile; state: SsoLoginState } | null
-  onClose: () => void
-  onLoginDone: () => void
-}
-
-function SsoLoginModal({ modal, onClose, onLoginDone }: SsoLoginModalProps) {
-  const [copied, setCopied] = useState(false)
-  const [status, setStatus] = useState<SsoLoginState>({ status: 'idle' })
-
-  useEffect(() => {
-    if (modal?.state.status === 'starting') {
-      setStatus({ status: 'starting' })
-    }
-  }, [modal])
-
-  useEffect(() => {
-    if (!modal || status.status === 'idle') return
-    if (status.status === 'starting') {
-      // In real app, invoke sso_login_start here
-      // For now, show a placeholder state
-      setStatus({
-        status: 'waiting',
-        verificationUri: `https://${modal.profile.startUrl}`,
-        deviceCode: 'mock-device-code',
-        clientId: 'mock-client-id',
-        clientSecret: 'mock-secret',
-        interval: 5,
-      })
-    }
-    if (status.status === 'waiting') {
-      // Start polling
-      setStatus(s => ({ ...s, status: 'polling' }))
-    }
-  }, [modal, status.status])
-
-  if (!modal) return null
-
-  const copy = () => {
-    if (status.verificationUri) {
-      navigator.clipboard.writeText(status.verificationUri)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }
-  }
-
-  return (
-    <Modal open={!!modal} onClose={onClose} title="SSO Login Required">
-      <div className="space-y-4">
-        <Callout variant="info">
-          Your browser has been opened to complete the SSO login. Approve the request to continue.
-        </Callout>
-
-        {status.verificationUri && (
-          <div>
-            <p className="text-text-muted text-xs mb-1.5">Verification URL</p>
-            <div className="flex items-center gap-2 bg-bg-surface rounded-lg px-3 py-2 border border-border">
-              <span className="flex-1 font-mono text-xs text-text-secondary truncate">{status.verificationUri}</span>
-              <button onClick={copy} className="text-text-muted hover:text-primary transition-colors flex-shrink-0">
-                {copied ? (
-                  <svg className="w-3.5 h-3.5 text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M20 6L9 17l-5-5"/>
-                  </svg>
-                ) : (
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <rect x="9" y="9" width="13" height="13" rx="2"/>
-                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-                  </svg>
-                )}
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="flex items-center gap-2.5 py-2">
-          {(status.status === 'polling' || status.status === 'waiting') && (
-            <>
-              <div className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin flex-shrink-0" />
-              <span className="text-text-secondary text-sm">Waiting for browser login...</span>
-            </>
-          )}
-          {status.status === 'starting' && (
-            <>
-              <div className="w-3.5 h-3.5 border-2 border-text-muted border-t-transparent rounded-full animate-spin flex-shrink-0" />
-              <span className="text-text-muted text-sm">Starting SSO flow...</span>
-            </>
-          )}
-          {status.status === 'done' && (
-            <>
-              <svg className="w-3.5 h-3.5 text-success flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M20 6L9 17l-5-5"/>
-              </svg>
-              <span className="text-success text-sm">Login successful!</span>
-            </>
-          )}
-          {status.status === 'error' && (
-            <span className="text-danger text-sm">{status.error ?? 'Login failed'}</span>
-          )}
-        </div>
-
-        <div className="flex justify-end gap-2 pt-1">
-          <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-          {status.status === 'done' && (
-            <Button variant="primary" size="sm" onClick={onLoginDone}>Continue</Button>
-          )}
-        </div>
-      </div>
-    </Modal>
   )
 }
 

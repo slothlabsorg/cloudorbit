@@ -25,6 +25,30 @@ export function envOverrideKey(startUrl: string, accountId: string): string {
   return `${startUrl}|${accountId}`
 }
 
+/**
+ * Derive the clean account name from a Profile. Handles three legacy shapes:
+ *  1. Fresh wizard output has `accountName` set explicitly — return it.
+ *  2. Pre-fix wizard produced `name = "polaris-development / PolarisReadOnly"`
+ *     — split on " / ".
+ *  3. `parse_config` (reads ~/.aws/config) produces `name =
+ *     "polaris-development-PolarisReadOnly"` — strip `-{roleName}` suffix.
+ *
+ * We apply this once at the load boundary (App useEffect) so the rest of
+ * the UI never has to think about the historical naming formats.
+ */
+export function accountNameFrom(profile: {
+  name: string
+  accountName?: string
+  roleName?: string | null
+}): string {
+  if (profile.accountName) return profile.accountName
+  if (profile.name.includes(' / ')) return profile.name.split(' / ')[0]
+  if (profile.roleName && profile.name.endsWith(`-${profile.roleName}`)) {
+    return profile.name.slice(0, -profile.roleName.length - 1)
+  }
+  return profile.name
+}
+
 /** Override takes precedence over name-based auto-detection. */
 export function resolveEnv(
   overrides: Record<string, EnvType>,

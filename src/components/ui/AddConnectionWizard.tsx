@@ -211,6 +211,9 @@ export function AddConnectionWizard({ open, onClose, onSave }: AddConnectionWiza
       ? data.discoveredAccounts.flatMap(acc =>
           acc.roles.map(role => ({
             name: `${acc.accountName} / ${role.roleName}`,
+            // Store the raw accountName so the Accounts grouping can render
+            // clean "account" headers without stripping the "/ role" suffix.
+            accountName: acc.accountName,
             startUrl,
             ssoRegion: data.ssoRegion,
             accountId: acc.accountId,

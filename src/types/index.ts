@@ -1,6 +1,16 @@
 export type Screen = 'orbit' | 'accounts' | 'sessions' | 'clusters' | 'activity' | 'settings' | 'docs' | 'support'
 export type SessionStatus = 'active' | 'expiring' | 'expired' | 'idle' | 'requires-auth'
 export type EnvType = 'prod' | 'staging' | 'dev' | 'sandbox' | 'unknown'
+
+/** User-authored tag with a free-form label and any color. Rendered in place
+ *  of the canonical EnvBadge when set. Kept separate from EnvType so the
+ *  prod/staging/dev semantics (confirmation dialogs, etc.) still apply only
+ *  to the canonical values. */
+export interface CustomTag {
+  label: string
+  /** CSS color — e.g. `#f472b6` or `rgb(...)`. */
+  color: string
+}
 export type MethodType = 'sso' | 'iam' | 'federated' | 'chained'
 
 export interface SsoGroup {
@@ -12,7 +22,12 @@ export interface SsoGroup {
   alias?: string
 }
 export interface Profile {
+  /** Display name — usually "{accountName} / {roleName}". */
   name: string
+  /** The real account name from AWS SSO — used as the group header
+   *  in Accounts. Optional for backwards compat with profiles loaded
+   *  from ~/.aws/config that have no separate name. */
+  accountName?: string
   startUrl: string
   ssoRegion: string
   accountId: string | null

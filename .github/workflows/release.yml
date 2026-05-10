@@ -19,8 +19,12 @@ jobs:
             args: '--target aarch64-apple-darwin'
             rust-targets: 'aarch64-apple-darwin'
 
-          # macOS — Intel (x86_64), native build on older runner
-          - platform: macos-13
+          # macOS — Intel (x86_64), cross-compiled on the ARM64 runner.
+          # `macos-13` queues for hours (community reports 30-60 min routinely,
+          # we observed 3h+). Apple Silicon runners handle x86_64 targets via
+          # the cross toolchain + tauri-bundler, and the resulting DMG runs
+          # under Rosetta on Intel Macs exactly the same as a native build.
+          - platform: macos-latest
             args: '--target x86_64-apple-darwin'
             rust-targets: 'x86_64-apple-darwin'
 

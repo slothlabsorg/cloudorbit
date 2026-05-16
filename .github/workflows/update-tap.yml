@@ -1,70 +1,85 @@
 name: Update Homebrew Tap
 
-# Runs automatically when a GitHub Release is published (not just created as draft)
+# Fires when a draft release is published. Also exposes workflow_dispatch so
+# we can republish any past tag on demand — useful when seeding the tap for
+# the first time, or recovering from a transient failure.
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to (re)publish (e.g. v1.0.0)'
+        required: true
+        type: string
 
 jobs:
   update-tap:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout cloudorbit repo
+      - name: Resolve tag and version
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="${{ inputs.tag }}"
+          fi
+          echo "tag=$TAG"          >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}"  >> "$GITHUB_OUTPUT"
+
+      - name: Checkout app repo
         uses: actions/checkout@v4
 
-      - name: Extract version from tag
-        id: ver
-        run: |
-          # Strip leading 'v': v0.1.0 → 0.1.0
-          echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-
-      # Download the actual DMG files to compute their SHA256 hashes
-      # (Homebrew requires exact hashes in the cask)
-      - name: Compute DMG SHA256 hashes
+      - name: Download DMGs and compute SHA256
         id: sha
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          VERSION="${{ steps.ver.outputs.version }}"
-          BASE="https://github.com/${{ github.repository }}/releases/download/v${VERSION}"
+          mkdir dmgs
+          gh release download "$TAG" \
+            --repo "${{ github.repository }}" \
+            --pattern "*_aarch64.dmg" \
+            --pattern "*_x64.dmg" \
+            --dir dmgs
 
-          curl -fsSL "${BASE}/CloudOrbit_${VERSION}_aarch64.dmg" -o arm.dmg
-          curl -fsSL "${BASE}/CloudOrbit_${VERSION}_x64.dmg"     -o x64.dmg
-
-          echo "arm=$(sha256sum arm.dmg | awk '{print $1}')" >> $GITHUB_OUTPUT
-          echo "x64=$(sha256sum x64.dmg | awk '{print $1}')" >> $GITHUB_OUTPUT
+          SHA_ARM=$(sha256sum dmgs/*_aarch64.dmg | awk '{print $1}')
+          SHA_X64=$(sha256sum dmgs/*_x64.dmg     | awk '{print $1}')
+          echo "arm=$SHA_ARM" >> "$GITHUB_OUTPUT"
+          echo "x64=$SHA_X64" >> "$GITHUB_OUTPUT"
 
       - name: Checkout homebrew-tap repo
         uses: actions/checkout@v4
         with:
-          repository: slothlabs/homebrew-tap
+          repository: slothlabsorg/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: homebrew-tap
 
-      # Render the cask template with real version + SHA256 values
-      - name: Write updated cask file
+      - name: Render Cask from template
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ steps.meta.outputs.version }}
           SHA_ARM: ${{ steps.sha.outputs.arm }}
           SHA_X64: ${{ steps.sha.outputs.x64 }}
         run: |
           mkdir -p homebrew-tap/Casks
-          python3 - << 'PY'
-          import os, pathlib
+          sed \
+            -e "s|__VERSION__|$VERSION|g" \
+            -e "s|__SHA_ARM__|$SHA_ARM|g" \
+            -e "s|__SHA_X64__|$SHA_X64|g" \
+            distribute/homebrew/cloudorbit.rb.tmpl > homebrew-tap/Casks/cloudorbit.rb
 
-          tmpl = pathlib.Path("distribute/homebrew/cloudorbit.rb.tmpl").read_text()
-          result = (tmpl
-              .replace("__VERSION__", os.environ["VERSION"])
-              .replace("__SHA_ARM__", os.environ["SHA_ARM"])
-              .replace("__SHA_X64__", os.environ["SHA_X64"]))
-          pathlib.Path("homebrew-tap/Casks/cloudorbit.rb").write_text(result)
-          print("Cask written OK")
-          PY
-
-      - name: Commit and push to tap repo
+      - name: Commit and push to tap
+        working-directory: homebrew-tap
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          cd homebrew-tap
           git config user.name  "cloudorbit-bot"
           git config user.email "bot@slothlabs.org"
           git add Casks/cloudorbit.rb
-          git diff --staged --quiet || git commit -m "chore: bump cloudorbit to ${{ steps.ver.outputs.version }}"
+          if git diff --staged --quiet; then
+            echo "Cask already up to date — nothing to push."
+            exit 0
+          fi
+          git commit -m "chore: bump cloudorbit to $VERSION"
           git push

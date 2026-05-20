@@ -7,7 +7,8 @@ interface SidebarProps {
   onNavigate: (screen: Screen) => void
   collapsed: boolean
   onToggleCollapse: () => void
-  activeSession?: Session | null
+  activeSessions: Session[]
+  newsUnread?: number
 }
 
 interface NavItem {
@@ -95,6 +96,15 @@ function IconAccounts() {
   )
 }
 
+function IconNews() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 22h16a2 2 0 002-2V4a2 2 0 00-2-2H8a2 2 0 00-2 2v16a2 2 0 01-2 2zm0 0a2 2 0 01-2-2v-9c0-1.1.9-2 2-2h2"/>
+      <path d="M18 14h-8M15 18h-5M10 6h8v4h-8z"/>
+    </svg>
+  )
+}
+
 function IconCollapse({ collapsed }: { collapsed: boolean }) {
   return (
     <svg className={`w-3.5 h-3.5 transition-transform duration-200 ${collapsed ? '' : 'rotate-180'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -109,6 +119,7 @@ const navItems: NavItem[] = [
   { id: 'sessions', label: 'Sessions',   icon: <IconKey /> },
   { id: 'clusters', label: 'Clusters',   icon: <IconCloud /> },
   { id: 'activity', label: 'Activity',   icon: <IconActivity /> },
+  { id: 'news',     label: 'News',       icon: <IconNews /> },
 ]
 
 const bottomItems: NavItem[] = [
@@ -117,7 +128,18 @@ const bottomItems: NavItem[] = [
   { id: 'support',  label: 'Support us', icon: <IconHeart /> },
 ]
 
-export function Sidebar({ screen, onNavigate, collapsed, onToggleCollapse, activeSession }: SidebarProps) {
+export function Sidebar({ screen, onNavigate, collapsed, onToggleCollapse, activeSessions, newsUnread = 0 }: SidebarProps) {
+  const count = activeSessions.length
+  const [idx, setIdx] = React.useState(0)
+
+  React.useEffect(() => { setIdx(0) }, [count])
+  React.useEffect(() => {
+    if (count <= 1) return
+    const t = setInterval(() => setIdx(i => (i + 1) % count), 5000)
+    return () => clearInterval(t)
+  }, [count])
+
+  const current = activeSessions[Math.min(idx, count - 1)] ?? null
   const w = collapsed ? 48 : 180
 
   return (
@@ -129,7 +151,14 @@ export function Sidebar({ screen, onNavigate, collapsed, onToggleCollapse, activ
       {/* Nav items */}
       <div className="flex-1 py-2 overflow-hidden">
         {navItems.map(item => (
-          <NavButton key={item.id} item={item} active={screen === item.id} collapsed={collapsed} onNavigate={onNavigate} />
+          <NavButton
+            key={item.id}
+            item={item}
+            active={screen === item.id}
+            collapsed={collapsed}
+            onNavigate={onNavigate}
+            badge={item.id === 'news' && newsUnread > 0 ? newsUnread : undefined}
+          />
         ))}
       </div>
 
@@ -139,22 +168,44 @@ export function Sidebar({ screen, onNavigate, collapsed, onToggleCollapse, activ
           <NavButton key={item.id} item={item} active={screen === item.id} collapsed={collapsed} onNavigate={onNavigate} />
         ))}
 
-        {/* Active session pill */}
+        {/* Active sessions pill */}
         <AnimatePresence>
-          {activeSession && !collapsed && (
-            <motion.div
+          {current && !collapsed && (
+            <motion.button
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
-              className="mx-2 mt-2 mb-1 bg-bg-surface rounded-lg px-2.5 py-2 overflow-hidden"
+              onClick={() => onNavigate('sessions')}
+              className="mx-2 mt-2 mb-1 bg-bg-surface rounded-lg px-2.5 py-2 overflow-hidden text-left w-[calc(100%-16px)] hover:bg-bg-elevated transition-colors"
             >
-              <div className="flex items-center gap-1.5 mb-0.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-success flex-shrink-0" />
-                <span className="text-[10px] text-success font-medium">Active</span>
+              <div className="flex items-center justify-between mb-0.5">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-success flex-shrink-0" />
+                  <span className="text-[10px] text-success font-medium">
+                    {count === 1 ? 'Active' : `${count} active`}
+                  </span>
+                </div>
+                {count > 1 && (
+                  <div className="flex gap-0.5">
+                    {activeSessions.map((_, i) => (
+                      <div key={i} className={`w-1 h-1 rounded-full transition-colors ${i === idx ? 'bg-success' : 'bg-text-muted/30'}`} />
+                    ))}
+                  </div>
+                )}
               </div>
-              <p className="text-text-secondary text-xs font-medium truncate">{activeSession.accountName}</p>
-              <p className="text-text-muted text-[10px] truncate">{activeSession.roleName}</p>
-            </motion.div>
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={current.id}
+                  initial={{ opacity: 0, y: 3 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -3 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <p className="text-text-secondary text-xs font-medium truncate">{current.accountName}</p>
+                  <p className="text-text-muted text-[10px] truncate">{current.roleName}</p>
+                </motion.div>
+              </AnimatePresence>
+            </motion.button>
           )}
         </AnimatePresence>
 
@@ -175,11 +226,12 @@ export function Sidebar({ screen, onNavigate, collapsed, onToggleCollapse, activ
   )
 }
 
-function NavButton({ item, active, collapsed, onNavigate }: {
+function NavButton({ item, active, collapsed, onNavigate, badge }: {
   item: NavItem
   active: boolean
   collapsed: boolean
   onNavigate: (screen: Screen) => void
+  badge?: number
 }) {
   const isSupport = item.id === 'support'
   return (
@@ -195,13 +247,21 @@ function NavButton({ item, active, collapsed, onNavigate }: {
       style={{ width: 'calc(100% - 8px)' }}
       title={collapsed ? item.label : undefined}
     >
-      <span className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
+      <span className="relative flex-shrink-0 w-4 h-4 flex items-center justify-center">
         {item.icon}
+        {badge !== undefined && badge > 0 && (
+          <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-primary border border-bg-elevated" />
+        )}
       </span>
       {!collapsed && (
-        <span className="text-sm font-medium whitespace-nowrap overflow-hidden">{item.label}</span>
+        <span className="text-sm font-medium whitespace-nowrap overflow-hidden flex-1">{item.label}</span>
       )}
-      {active && !collapsed && (
+      {!collapsed && badge !== undefined && badge > 0 && !active && (
+        <span className="ml-auto text-[9px] font-mono bg-primary/15 text-primary rounded px-1 py-0.5 flex-shrink-0">
+          {badge > 9 ? '9+' : badge}
+        </span>
+      )}
+      {active && !collapsed && !badge && (
         <span className={`ml-auto w-1 h-1 rounded-full flex-shrink-0 ${isSupport ? 'bg-rose-400' : 'bg-primary'}`} />
       )}
     </button>

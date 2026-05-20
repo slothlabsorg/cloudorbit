@@ -22,6 +22,12 @@ export interface SsoLoginStartResult {
   verificationUriComplete: string
 }
 
+export interface ProfileCreds {
+  accessKeyId: string
+  secretAccessKey: string
+  sessionToken: string
+}
+
 export interface AssumeRoleResult {
   profileName: string
   accessKeyId: string
@@ -65,8 +71,20 @@ export const api = {
   listAccounts: (startUrl: string, ssoRegion: string) =>
     invoke<AccountInfo[]>('list_accounts', { startUrl, ssoRegion }),
 
-  assumeRole: (startUrl: string, ssoRegion: string, accountId: string, roleName: string) =>
-    invoke<AssumeRoleResult>('assume_role', { startUrl, ssoRegion, accountId, roleName }),
+  assumeRole: (startUrl: string, ssoRegion: string, accountId: string, roleName: string, region: string) =>
+    invoke<AssumeRoleResult>('assume_role', { startUrl, ssoRegion, accountId, roleName, region }),
+
+  readProfileCredentials: (profileName: string) =>
+    invoke<ProfileCreds>('read_profile_credentials', { profileName }),
+
+  startIamSession: (accessKeyId: string, secretAccessKey: string, region: string, alias: string) =>
+    invoke<AssumeRoleResult>('start_iam_session', { accessKeyId, secretAccessKey, region, alias }),
+
+  assumeRoleChained: (sourceProfile: string, roleArn: string, sessionName: string, region: string) =>
+    invoke<AssumeRoleResult>('assume_role_chained', { sourceProfile, roleArn, sessionName, region }),
+
+  assumeRoleFederated: (roleArn: string, webIdentityToken: string, sessionName: string, region: string) =>
+    invoke<AssumeRoleResult>('assume_role_federated', { roleArn, webIdentityToken, sessionName, region }),
 
   listEksClusters: (region: string, accessKeyId: string, secretAccessKey: string, sessionToken: string) =>
     invoke<ClusterInfo[]>('list_eks_clusters', {

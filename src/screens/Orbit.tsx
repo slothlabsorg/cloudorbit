@@ -31,6 +31,9 @@ interface OrbitProps {
   onToggleFavorite: (key: string) => void
   onAddConnection?: () => void
   onNavigate?: (screen: Screen) => void
+  updateInfo?: { version: string; body: string | null } | null
+  onUpdateClick?: () => void
+  onDismissUpdate?: () => void
 }
 
 function favKey(startUrl: string, accountId: string, roleName: string): string {
@@ -336,6 +339,7 @@ export function Orbit({
   favorites, envOverrides,
   onSelectSession, onStartSession, onRenewSession, onOpenConsole,
   onDetectClusters, onToggleFavorite, onAddConnection, onNavigate,
+  updateInfo, onUpdateClick, onDismissUpdate,
 }: OrbitProps) {
   const [tab, setTab] = useState<Tab>('active')
   const [starting, setStarting] = useState<string | null>(null)
@@ -518,6 +522,49 @@ export function Orbit({
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+        {/* News / update banner */}
+        <AnimatePresence>
+          {updateInfo && (
+            <motion.div
+              data-testid="update-banner"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2 }}
+              className="flex items-center gap-3 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent border border-primary/25 rounded-xl px-4 py-3"
+            >
+              <svg className="w-4 h-4 text-primary flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
+              </svg>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-text-primary">Update available</span>
+                  <span className="text-[10px] font-mono bg-primary/15 text-primary border border-primary/20 rounded px-1.5 py-0.5 font-semibold">
+                    v{updateInfo.version}
+                  </span>
+                </div>
+                <p className="text-text-muted text-[10px] mt-0.5">
+                  We ship frequently — this is an early release with constant improvements
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={onDismissUpdate}
+                  className="text-text-muted text-[11px] hover:text-text-primary transition-colors px-1"
+                >
+                  Later
+                </button>
+                <button
+                  onClick={onUpdateClick}
+                  className="text-[11px] font-semibold bg-primary text-bg-base hover:bg-primary/90 transition-colors rounded-lg px-3 py-1.5"
+                >
+                  Update Now
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Stat band */}
         <div className="flex gap-3">
           <StatTile label="Connections" value={stats.connections} tone="text-text-primary" onClick={onNavigate ? () => onNavigate('accounts') : undefined} />

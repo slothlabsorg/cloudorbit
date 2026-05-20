@@ -1,43 +1,73 @@
 import React from 'react'
-import type { Session, ClusterInfo } from '@/types'
+import { motion, AnimatePresence } from 'framer-motion'
+import type { Screen, Session, ClusterInfo } from '@/types'
 import { formatExpiry } from '@/lib/time'
 import { api } from '@/lib/tauri'
 import pkg from '../../../package.json'
 
 interface StatusBarProps {
-  activeSession?: Session | null
+  activeSessions: Session[]
   activeCluster?: ClusterInfo | null
+  onNavigate: (screen: Screen) => void
 }
 
-export function StatusBar({ activeSession, activeCluster }: StatusBarProps) {
-  const expiry = activeSession ? formatExpiry(activeSession.expiresAt) : null
+export function StatusBar({ activeSessions, activeCluster, onNavigate }: StatusBarProps) {
+  const count = activeSessions.length
+  const [idx, setIdx] = React.useState(0)
+
+  React.useEffect(() => { setIdx(0) }, [count])
+  React.useEffect(() => {
+    if (count <= 1) return
+    const t = setInterval(() => setIdx(i => (i + 1) % count), 5000)
+    return () => clearInterval(t)
+  }, [count])
+
+  const current = activeSessions[Math.min(idx, count - 1)] ?? null
+  const expiry = current ? formatExpiry(current.expiresAt) : null
 
   return (
     <div className="h-7 flex items-center justify-between px-4 border-t border-border-subtle bg-bg-base flex-shrink-0 select-none">
       <div className="flex items-center gap-4">
-        {activeSession ? (
-          <>
-            <div className="flex items-center gap-1.5">
-              <div className={`w-1.5 h-1.5 rounded-full ${
-                expiry?.status === 'expired' ? 'bg-danger' :
-                expiry?.status === 'expiring' ? 'bg-warning pulse-warning' : 'bg-success'
-              }`} />
-              <span className="text-text-secondary text-[11px] font-medium">
-                {activeSession.accountName}
-              </span>
-              <span className="text-text-muted text-[11px]">/</span>
-              <span className="text-text-muted text-[11px]">{activeSession.roleName}</span>
-            </div>
-            <span className="text-text-muted text-[11px] font-mono">{activeSession.region}</span>
-            {expiry && (
-              <span className={`text-[11px] font-mono ${
-                expiry.status === 'expired' ? 'text-danger' :
-                expiry.status === 'expiring' ? 'text-warning' : 'text-text-muted'
-              }`}>
-                {expiry.label}
-              </span>
-            )}
-          </>
+        {current ? (
+          <button
+            onClick={() => onNavigate('sessions')}
+            className="flex items-center gap-4 hover:opacity-70 transition-opacity"
+          >
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={current.id}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                className="flex items-center gap-4"
+              >
+                <div className="flex items-center gap-1.5">
+                  <div className={`w-1.5 h-1.5 rounded-full ${
+                    expiry?.status === 'expired' ? 'bg-danger' :
+                    expiry?.status === 'expiring' ? 'bg-warning pulse-warning' : 'bg-success'
+                  }`} />
+                  {count > 1 && (
+                    <span className="text-text-muted text-[11px] font-mono">{idx + 1}/{count}</span>
+                  )}
+                  <span className="text-text-secondary text-[11px] font-medium">
+                    {current.accountName}
+                  </span>
+                  <span className="text-text-muted text-[11px]">/</span>
+                  <span className="text-text-muted text-[11px]">{current.roleName}</span>
+                </div>
+                <span className="text-text-muted text-[11px] font-mono">{current.region}</span>
+                {expiry && (
+                  <span className={`text-[11px] font-mono ${
+                    expiry.status === 'expired' ? 'text-danger' :
+                    expiry.status === 'expiring' ? 'text-warning' : 'text-text-muted'
+                  }`}>
+                    {expiry.label}
+                  </span>
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </button>
         ) : (
           <span className="text-text-muted text-[11px]">No active session</span>
         )}

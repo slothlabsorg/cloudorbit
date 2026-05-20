@@ -1,4 +1,4 @@
-export type Screen = 'orbit' | 'accounts' | 'sessions' | 'clusters' | 'activity' | 'settings' | 'docs' | 'support'
+export type Screen = 'orbit' | 'accounts' | 'sessions' | 'clusters' | 'activity' | 'news' | 'settings' | 'docs' | 'support'
 export type SessionStatus = 'active' | 'expiring' | 'expired' | 'idle' | 'requires-auth'
 export type EnvType = 'prod' | 'staging' | 'dev' | 'sandbox' | 'unknown'
 

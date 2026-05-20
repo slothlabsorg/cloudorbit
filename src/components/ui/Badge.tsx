@@ -43,7 +43,7 @@ export function EnvEditableBadge({ env, custom, overridden, onChange, onSetCusto
   onReset?: () => void
 }) {
   const [open, setOpen] = React.useState(false)
-  const [coords, setCoords] = React.useState<{ left: number; top: number } | null>(null)
+  const [coords, setCoords] = React.useState<{ left: number; top?: number; bottom?: number } | null>(null)
   const [customMode, setCustomMode] = React.useState(false)
   const [customLabel, setCustomLabel] = React.useState(custom?.label ?? '')
   const [customColor, setCustomColor] = React.useState(custom?.color ?? COLOR_PRESETS[0])
@@ -55,7 +55,12 @@ export function EnvEditableBadge({ env, custom, overridden, onChange, onSetCusto
   const updateCoords = React.useCallback(() => {
     if (!btnRef.current) return
     const r = btnRef.current.getBoundingClientRect()
-    setCoords({ left: r.left, top: r.bottom + 4 })
+    const vh = window.innerHeight
+    if (vh - r.bottom - 8 < 240) {
+      setCoords({ left: r.left, bottom: vh - r.top + 4 })
+    } else {
+      setCoords({ left: r.left, top: r.bottom + 4 })
+    }
   }, [])
 
   React.useEffect(() => {
@@ -118,7 +123,7 @@ export function EnvEditableBadge({ env, custom, overridden, onChange, onSetCusto
         <div
           ref={menuRef}
           className="fixed z-[100] bg-bg-elevated border border-border rounded-lg shadow-xl py-1 min-w-40"
-          style={{ left: coords.left, top: coords.top }}
+          style={{ left: coords.left, ...(coords.top !== undefined ? { top: coords.top } : { bottom: coords.bottom }) }}
           onClick={e => e.stopPropagation()}
           onMouseDown={e => e.stopPropagation()}
         >

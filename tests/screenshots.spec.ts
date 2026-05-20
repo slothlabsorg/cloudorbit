@@ -364,6 +364,44 @@ test('orbit — support banner (first visit, not dismissed)', async ({ page }) =
   await snap(page, '35-orbit-support-banner')
 })
 
+// ── Update / news banner (marketing screenshots) ──────────────────────────────
+
+test('orbit — update news banner visible', async ({ page }) => {
+  await page.goto(`${BASE}&screen=orbit&news=1`)
+  await page.waitForSelector('[data-testid="update-banner"]', { timeout: 8000 })
+  await page.waitForTimeout(500)
+  await snap(page, '36-orbit-update-banner')
+})
+
+test('updater modal — improved messaging with early release note', async ({ page }) => {
+  await page.goto(`${BASE}&screen=orbit&updater=1`)
+  await page.waitForSelector('.text-text-primary', { timeout: 8000 })
+  await page.waitForTimeout(600)
+  await snap(page, '37-updater-modal-early-release')
+})
+
+test('orbit — update banner with active sessions (full dashboard)', async ({ page }) => {
+  await page.goto(`${BASE}&screen=orbit&news=1`)
+  await page.waitForSelector('[data-testid="update-banner"]', { timeout: 8000 })
+  await page.waitForTimeout(500)
+  await snap(page, '38-orbit-update-banner-with-sessions')
+})
+
+// ── News screen ───────────────────────────────────────────────────────────────
+
+test('news — feed with all card types', async ({ page }) => {
+  await goto(page, 'news')
+  await page.waitForTimeout(600)
+  await snap(page, '39-news-feed')
+})
+
+test('news — sidebar with unread badge', async ({ page }) => {
+  // Fresh localStorage = all items unread → badge shows on News nav item
+  await goto(page, 'orbit')
+  await page.waitForTimeout(400)
+  await snap(page, '40-news-sidebar-unread-badge')
+})
+
 // ── Window size variations ─────────────────────────────────────────────────
 
 test('orbit — 1400×900 (larger display)', async ({ page }) => {

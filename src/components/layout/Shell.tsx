@@ -11,6 +11,7 @@ interface ShellProps {
   onNavigate: (screen: Screen) => void
   sidebarCollapsed: boolean
   onToggleSidebar: () => void
+  newsUnread?: number
   sessions: Session[]
   selectedSession: Session | null
   onCloseDetail: () => void
@@ -24,12 +25,11 @@ interface ShellProps {
 }
 
 export function Shell({
-  screen, onNavigate, sidebarCollapsed, onToggleSidebar,
+  screen, onNavigate, sidebarCollapsed, onToggleSidebar, newsUnread,
   sessions, selectedSession, onCloseDetail, onRenewSession, onOpenConsole,
   onActivateCluster, onDetectClusters, activeCluster, activity, children,
 }: ShellProps) {
-  // Find the primary active session for status bar
-  const primarySession = selectedSession ?? sessions.find(s => new Date(s.expiresAt).getTime() > Date.now()) ?? null
+  const activeSessions = sessions.filter(s => new Date(s.expiresAt).getTime() > Date.now())
 
   // Get all clusters from sessions
   const allClusters: ClusterInfo[] = sessions.flatMap(s => s.clusters ?? [])
@@ -44,7 +44,8 @@ export function Shell({
           onNavigate={onNavigate}
           collapsed={sidebarCollapsed}
           onToggleCollapse={onToggleSidebar}
-          activeSession={primarySession}
+          activeSessions={activeSessions}
+          newsUnread={newsUnread}
         />
 
         <div className="flex flex-1 overflow-hidden">
@@ -73,7 +74,7 @@ export function Shell({
         </div>
       </div>
 
-      <StatusBar activeSession={primarySession} activeCluster={activeCluster} />
+      <StatusBar activeSessions={activeSessions} activeCluster={activeCluster} onNavigate={onNavigate} />
     </div>
   )
 }

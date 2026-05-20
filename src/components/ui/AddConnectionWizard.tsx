@@ -77,26 +77,82 @@ export function AddConnectionWizard({ open, onClose, onSave }: AddConnectionWiza
     if (step !== 3) return
     setValidationDone(false)
 
-    if (data.method !== 'sso') {
-      // Non-SSO (iam/federated/chained) — still simulated. Real impls for these
-      // methods are a future task; this preserves existing UX.
+    if (data.method === 'iam') {
       const list: Check[] = [
-        { label: 'Identity endpoint reachable', status: 'pending' },
-        { label: 'STS credentials generated', status: 'pending' },
-        { label: 'Available roles fetched', status: 'pending' },
+        { label: 'Validating credentials with AWS STS', status: 'pending' },
+        { label: 'Writing to ~/.aws/credentials', status: 'pending' },
       ]
       setChecks(list)
       let cancelled = false
       ;(async () => {
-        for (let i = 0; i < list.length; i++) {
+        try {
+          setChecks(c => c.map((ch, i) => i === 0 ? { ...ch, status: 'loading' } : ch))
+          const creds = await api.startIamSession(
+            data.accessKeyId, data.secretAccessKey, data.region, data.alias,
+          )
           if (cancelled) return
-          setChecks(c => c.map((ch, idx) => idx === i ? { ...ch, status: 'loading' } : ch))
-          await new Promise(r => setTimeout(r, 500))
+          setChecks(c => c.map((ch, i) => i === 0 ? { ...ch, status: 'success', detail: `Account ${creds.accountId}` } : ch))
+          setChecks(c => c.map((ch, i) => i === 1 ? { ...ch, status: 'success', detail: creds.profileName } : ch))
+          setData(d => ({ ...d, discoveredAccounts: [] }))
+          await new Promise(r => setTimeout(r, 300))
+          if (!cancelled) { setValidationDone(true); setStep(4) }
+        } catch (err) {
           if (cancelled) return
-          setChecks(c => c.map((ch, idx) => idx === i ? { ...ch, status: 'success' } : ch))
+          setChecks(c => { const idx = c.findIndex(ch => ch.status !== 'success'); return idx < 0 ? c : c.map((ch, i) => i === idx ? { ...ch, status: 'error', detail: String(err) } : ch) })
         }
-        await new Promise(r => setTimeout(r, 300))
-        if (!cancelled) { setValidationDone(true); setStep(4) }
+      })()
+      return () => { cancelled = true }
+    }
+
+    if (data.method === 'chained') {
+      const list: Check[] = [
+        { label: 'Reading source credentials', status: 'pending' },
+        { label: 'Assuming target role via STS', status: 'pending' },
+      ]
+      setChecks(list)
+      let cancelled = false
+      ;(async () => {
+        try {
+          setChecks(c => c.map((ch, i) => i === 0 ? { ...ch, status: 'loading' } : ch))
+          setChecks(c => c.map((ch, i) => i === 0 ? { ...ch, status: 'success' } : ch))
+          setChecks(c => c.map((ch, i) => i === 1 ? { ...ch, status: 'loading' } : ch))
+          const creds = await api.assumeRoleChained(
+            data.alias, data.targetRoleArn, data.alias, data.region,
+          )
+          if (cancelled) return
+          setChecks(c => c.map((ch, i) => i === 1 ? { ...ch, status: 'success', detail: creds.roleName } : ch))
+          await new Promise(r => setTimeout(r, 300))
+          if (!cancelled) { setValidationDone(true); setStep(4) }
+        } catch (err) {
+          if (cancelled) return
+          setChecks(c => { const idx = c.findIndex(ch => ch.status !== 'success'); return idx < 0 ? c : c.map((ch, i) => i === idx ? { ...ch, status: 'error', detail: String(err) } : ch) })
+        }
+      })()
+      return () => { cancelled = true }
+    }
+
+    if (data.method === 'federated') {
+      const list: Check[] = [
+        { label: 'Assuming federated role via STS', status: 'pending' },
+        { label: 'Writing credentials to disk', status: 'pending' },
+      ]
+      setChecks(list)
+      let cancelled = false
+      ;(async () => {
+        try {
+          setChecks(c => c.map((ch, i) => i === 0 ? { ...ch, status: 'loading' } : ch))
+          const creds = await api.assumeRoleFederated(
+            data.roleArn, data.principalArn, data.alias, data.region,
+          )
+          if (cancelled) return
+          setChecks(c => c.map((ch, i) => i === 0 ? { ...ch, status: 'success', detail: creds.roleName } : ch))
+          setChecks(c => c.map((ch, i) => i === 1 ? { ...ch, status: 'success', detail: creds.profileName } : ch))
+          await new Promise(r => setTimeout(r, 300))
+          if (!cancelled) { setValidationDone(true); setStep(4) }
+        } catch (err) {
+          if (cancelled) return
+          setChecks(c => { const idx = c.findIndex(ch => ch.status !== 'success'); return idx < 0 ? c : c.map((ch, i) => i === idx ? { ...ch, status: 'error', detail: String(err) } : ch) })
+        }
       })()
       return () => { cancelled = true }
     }

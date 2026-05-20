@@ -73,6 +73,27 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --locked -- -D warnings
 
-      - name: cargo test
+      - name: cargo test (unit)
         working-directory: src-tauri
         run: cargo test --locked
+
+      # ── LocalStack integration tests ─────────────────────────────────────
+      - name: Start LocalStack
+        uses: LocalStack/setup-localstack@v0.2.3
+        with:
+          image-tag: 'latest'
+          install-awslocal: true
+
+      - name: Bootstrap LocalStack resources
+        run: bash tests/localstack/setup.sh
+        env:
+          AWS_ENDPOINT_URL: http://localhost:4566
+
+      - name: cargo test (LocalStack integration)
+        working-directory: src-tauri
+        run: cargo test --locked -- --ignored
+        env:
+          AWS_ENDPOINT_URL: http://localhost:4566
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_DEFAULT_REGION: us-east-1

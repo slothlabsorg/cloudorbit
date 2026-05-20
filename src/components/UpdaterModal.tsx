@@ -26,16 +26,24 @@ function getMockParam() {
 }
 
 const MOCK_UPDATE: UpdateInfo = {
-  version: '0.2.0',
-  body: `## What's new in v0.2.0\n\n- Multi-cluster kubeconfig support\n- EC2 SSM session improvements\n- GCP support (preview)\n- Performance: 40% faster session loading\n- Fixed token expiry on non-UTC systems`,
+  version: '1.1.0',
+  body: `## What's new in v1.1.0\n\n- Session persistence across restarts\n- Region selector when starting sessions\n- IAM / Chained / Federated auth backends\n- Sidebar cycles all active sessions\n- Environment tag dropdown no longer clips on last row\n- Credentials file now includes selected region`,
   date: new Date().toISOString(),
 }
 
-export function UpdaterModal() {
+interface UpdaterModalProps {
+  dismissed?: boolean
+  onDismiss?: () => void
+  onUpdateAvailable?: (version: string, body: string | null) => void
+}
+
+export function UpdaterModal({ dismissed: dismissedProp, onDismiss, onUpdateAvailable }: UpdaterModalProps = {}) {
   const [state, setState] = useState<UpdaterState>(
     getMockParam() ? { status: 'available', info: MOCK_UPDATE } : { status: 'idle' }
   )
-  const [dismissed, setDismissed] = useState(false)
+  const [localDismissed, setLocalDismissed] = useState(false)
+  const dismissed = !!dismissedProp || localDismissed
+  const dismiss = () => { setLocalDismissed(true); onDismiss?.() }
 
   const checkForUpdate = useCallback(async () => {
     if (getMockParam()) return // already pre-populated
@@ -44,14 +52,13 @@ export function UpdaterModal() {
       const { check } = await import('@tauri-apps/plugin-updater')
       const update = await check()
       if (!update) return
-      setState({
-        status: 'available',
-        info: {
-          version: update.version,
-          body: update.body ?? null,
-          date: update.date ?? null,
-        },
-      })
+      const info = {
+        version: update.version,
+        body: update.body ?? null,
+        date: update.date ?? null,
+      }
+      setState({ status: 'available', info })
+      onUpdateAvailable?.(info.version, info.body)
     } catch {
       // Not in Tauri or no update — silent
     }
@@ -100,6 +107,7 @@ export function UpdaterModal() {
 
   const isOpen = !dismissed && (state.status === 'available' || state.status === 'downloading' || state.status === 'ready' || state.status === 'error')
 
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -138,9 +146,12 @@ export function UpdaterModal() {
                 <div className="mt-3 text-center">
                   <h2 className="font-display font-bold text-text-primary text-base">Update Available</h2>
                   {state.status === 'available' && (
-                    <p className="text-text-muted text-xs mt-1">
-                      Version <span className="font-mono text-primary font-semibold">{state.info.version}</span> is ready to install
-                    </p>
+                    <>
+                      <p className="text-text-muted text-xs mt-1">
+                        Version <span className="font-mono text-primary font-semibold">{state.info.version}</span> is ready to install
+                      </p>
+                      <p className="text-text-muted/70 text-[10px] mt-1">We ship fast — expect frequent releases</p>
+                    </>
                   )}
                   {state.status === 'downloading' && (
                     <p className="text-text-muted text-xs mt-1">Downloading update…</p>
@@ -173,12 +184,19 @@ export function UpdaterModal() {
                 </div>
               )}
 
+              {/* Early release note */}
+              {state.status === 'available' && (
+                <p className="text-center text-text-muted/60 text-[10px] px-4 pb-2 leading-relaxed">
+                  CloudOrbit is in early release — we're actively building it and shipping improvements constantly.
+                </p>
+              )}
+
               {/* Actions */}
               <div className="flex items-center gap-2 px-4 pb-5">
                 {(state.status === 'available') && (
                   <>
                     <button
-                      onClick={() => setDismissed(true)}
+                      onClick={() => dismiss()}
                       className="flex-1 py-2 rounded-xl text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-bg-surface border border-border transition-colors"
                     >
                       Later
@@ -193,7 +211,7 @@ export function UpdaterModal() {
                 )}
                 {state.status === 'error' && (
                   <button
-                    onClick={() => setDismissed(true)}
+                    onClick={() => dismiss()}
                     className="flex-1 py-2 rounded-xl text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-bg-surface border border-border transition-colors"
                   >
                     Dismiss

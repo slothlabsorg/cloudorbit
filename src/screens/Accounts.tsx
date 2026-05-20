@@ -195,10 +195,11 @@ export function Accounts({
     }).length,
   }), [allRows, favorites])
 
-  const handleStart = async (row: AccountRow) => {
+  const handleStart = async (row: AccountRow, region?: string) => {
     if (!row.profile.accountId || !row.profile.roleName) return
     setStarting(row.key)
-    try { await onStartSession(row.profile) } catch {} finally { setStarting(null) }
+    const profile = region ? { ...row.profile, region } : row.profile
+    try { await onStartSession(profile) } catch {} finally { setStarting(null) }
   }
 
   const handleRowClick = (row: AccountRow) => {
@@ -329,7 +330,7 @@ export function Accounts({
             <AccountDetailPanel
               account={selectedAccount}
               onClose={() => setSelectedAccountKey(null)}
-              onStart={() => handleStart(selectedAccount)}
+              onStart={(region) => handleStart(selectedAccount, region)}
               isStarting={starting === selectedAccount.key}
               onDetectClusters={onDetectClusters}
             />
@@ -792,7 +793,7 @@ type DetailTab = 'overview' | 'roles' | 'clusters' | 'rules' | 'security'
 function AccountDetailPanel({ account, onClose, onStart, isStarting, onDetectClusters }: {
   account: AccountRow
   onClose: () => void
-  onStart: () => void
+  onStart: (region: string) => void
   isStarting: boolean
   onDetectClusters?: (s: Session) => Promise<void>
 }) {
@@ -880,15 +881,30 @@ function AccountDetailPanel({ account, onClose, onStart, isStarting, onDetectClu
 
 // ── Tab: Overview ────────────────────────────────────────────────────────────
 
+const AWS_REGIONS = [
+  'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2',
+  'ca-central-1', 'ca-west-1',
+  'eu-west-1', 'eu-west-2', 'eu-west-3', 'eu-central-1', 'eu-central-2', 'eu-north-1', 'eu-south-1', 'eu-south-2',
+  'ap-east-1', 'ap-south-1', 'ap-south-2', 'ap-southeast-1', 'ap-southeast-2', 'ap-southeast-3', 'ap-southeast-4', 'ap-northeast-1', 'ap-northeast-2', 'ap-northeast-3',
+  'me-south-1', 'me-central-1', 'af-south-1', 'il-central-1', 'sa-east-1',
+  'us-gov-east-1', 'us-gov-west-1',
+]
+
 function OverviewTab({ account, expiryLabel, expiryStatus, sessionStatus, onStart, isStarting }: {
   account: AccountRow
   expiryLabel: string
   expiryStatus: 'active' | 'expiring' | 'expired' | 'idle'
   sessionStatus: 'active' | 'expiring' | 'expired' | 'idle'
-  onStart: () => void
+  onStart: (region: string) => void
   isStarting: boolean
 }) {
   const [copied, setCopied] = useState(false)
+  const defaultRegion = account.region
+  const regionOptions = AWS_REGIONS.includes(defaultRegion)
+    ? AWS_REGIONS
+    : [defaultRegion, ...AWS_REGIONS]
+  const [selectedRegion, setSelectedRegion] = useState(defaultRegion)
+
   const copyId = () => {
     if (account.accountId) {
       navigator.clipboard.writeText(account.accountId)
@@ -913,7 +929,19 @@ function OverviewTab({ account, expiryLabel, expiryStatus, sessionStatus, onStar
         <DetailRow label="Alias" value={account.name} />
         <DetailRow label="Account ID" value={account.accountId ?? '—'} mono onCopy={account.accountId ? copyId : undefined} copied={copied} />
         <DetailRow label="Role" value={account.roleName ?? '—'} />
-        <DetailRow label="Region" value={account.region} mono />
+        {/* Region selector — allows overriding the profile default for this session */}
+        <div className="flex items-center justify-between gap-2 py-1.5 border-b border-border-subtle">
+          <span className="text-text-muted text-xs flex-shrink-0">Region</span>
+          <select
+            value={selectedRegion}
+            onChange={e => setSelectedRegion(e.target.value)}
+            className="bg-transparent text-text-secondary text-xs font-mono text-right border-none outline-none cursor-pointer hover:text-primary transition-colors appearance-none"
+          >
+            {regionOptions.map(r => (
+              <option key={r} value={r} className="bg-bg-elevated text-text-primary">{r}</option>
+            ))}
+          </select>
+        </div>
         <DetailRow label="Access" value={account.method.toUpperCase()} />
       </div>
 
@@ -940,7 +968,7 @@ function OverviewTab({ account, expiryLabel, expiryStatus, sessionStatus, onStar
 
       {/* Actions */}
       {!account.session && (
-        <Button variant="primary" size="sm" className="w-full" onClick={onStart} loading={isStarting}>
+        <Button variant="primary" size="sm" className="w-full" onClick={() => onStart(selectedRegion)} loading={isStarting}>
           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <polygon points="5 3 19 12 5 21 5 3"/>
           </svg>

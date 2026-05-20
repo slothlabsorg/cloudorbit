@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import type { Screen, Session, SsoGroup, ClusterInfo, ActivityEvent, Profile } from '@/types'
+import { toMeta, type SessionMeta } from '@/lib/session'
 import { api } from '@/lib/tauri'
 import { detectEnv, resolveEnv, envOverrideKey, accountNameFrom } from '@/lib/time'
 import type { EnvType, CustomTag } from '@/types'
@@ -15,6 +16,9 @@ import { Settings } from '@/screens/Settings'
 import { Docs } from '@/screens/Docs'
 import { Support } from '@/screens/Support'
 import { UpdaterModal } from '@/components/UpdaterModal'
+import { News } from '@/screens/News'
+import { getUnreadIds } from '@/lib/news'
+import { MOCK_FEED } from '@/data/news-mock'
 
 interface LoginState {
   status: 'idle' | 'starting' | 'polling' | 'done' | 'error'
@@ -51,6 +55,15 @@ const URL_DETAIL       = getUrlParam('detail') === '1'
 const URL_PALETTE      = getUrlParam('palette') === '1'
 const URL_FIRST_LAUNCH = getUrlParam('firstLaunch') === '1'
 const URL_UPDATER      = getUrlParam('updater') === '1'
+const URL_NEWS         = getUrlParam('news') === '1'
+const URL_MOCK_NEWS    = getUrlParam('mockNews') === '1' || URL_NEWS
+const URL_MOCK_UPDATE  = getUrlParam('mockUpdate') === '1'
+const URL_MOCK_UPDATE_VER = getUrlParam('mockUpdateVersion') ?? '1.1.0'
+
+const MOCK_NEWS_INFO = {
+  version: '1.1.0',
+  body: `## What's new in v1.1.0\n\n- Session persistence across restarts\n- Region selector when starting sessions\n- IAM / Chained / Federated auth backends\n- Sidebar cycles all active sessions\n- Environment tag dropdown no longer clips on last row\n- Credentials file now includes selected region`,
+}
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>(URL_SCREEN)
@@ -63,6 +76,18 @@ export default function App() {
   const [loginState, setLoginState] = useState<Record<string, LoginState>>({})
   const [activity, setActivity] = useState<ActivityEvent[]>(URL_MOCK ? mockActivity : [])
   const [activeCluster, setActiveCluster] = useState<ClusterInfo | null>(null)
+  const [updateInfo, setUpdateInfo] = useState<{ version: string; body: string | null } | null>(
+    URL_NEWS ? MOCK_NEWS_INFO : URL_MOCK_UPDATE ? { version: URL_MOCK_UPDATE_VER, body: null } : null
+  )
+  const [updaterDismissed, setUpdaterDismissed] = useState(() => {
+    const v = URL_MOCK_UPDATE ? URL_MOCK_UPDATE_VER : ''
+    if (!v) return false
+    try { return localStorage.getItem('cloudorbit.updaterDismissed') === v } catch { return false }
+  })
+  const [newsUnread, setNewsUnread] = useState(() => {
+    if (!URL_MOCK_NEWS) return 0
+    return getUnreadIds(MOCK_FEED.items.filter(i => !i.expiresAt || new Date(i.expiresAt).getTime() > Date.now())).length
+  })
 
   // ── Favorites ─────────────────────────────────────────────────────────────
   // Role-level favorites, keyed by `${startUrl}|${accountId}|${roleName}` so
@@ -144,6 +169,13 @@ export default function App() {
     })
   }, [])
 
+  // ── Session metadata persistence ──────────────────────────────────────────
+  useEffect(() => {
+    try {
+      localStorage.setItem('cloudorbit.sessionMeta', JSON.stringify(sessions.map(toMeta)))
+    } catch { /* quota */ }
+  }, [sessions])
+
   // Load config on mount
   useEffect(() => {
     const load = async () => {
@@ -191,6 +223,37 @@ export default function App() {
             accountName: p.accountName ?? accountNameFrom(p),
           })),
         })))
+
+        // Restore sessions from persisted metadata + credentials on disk.
+        // Only sessions whose expiresAt is still in the future are restored.
+        // If credentials are no longer on disk the session is silently dropped.
+        try {
+          const raw = localStorage.getItem('cloudorbit.sessionMeta')
+          if (raw) {
+            const meta: SessionMeta[] = JSON.parse(raw)
+            const now = Date.now()
+            const valid = meta.filter(m => new Date(m.expiresAt).getTime() > now)
+            if (valid.length > 0) {
+              const results = await Promise.all(
+                valid.map(async m => {
+                  try {
+                    const creds = await api.readProfileCredentials(m.profileName)
+                    return { ...m, ...creds } as Session
+                  } catch {
+                    return null
+                  }
+                })
+              )
+              const restored = results.filter((s): s is Session => s !== null)
+              if (restored.length > 0) {
+                // Keep sessionIdCounter above any restored ID to avoid collisions
+                const maxId = Math.max(...restored.map(s => parseInt(s.id) || 0))
+                if (maxId >= sessionIdCounter) sessionIdCounter = maxId
+                setSessions(restored)
+              }
+            }
+          }
+        } catch { /* ignore corrupt metadata */ }
       } catch (err) {
         // Not in Tauri or error — fall back to mock data
         console.warn('parse_config failed, using mock data:', err)
@@ -365,6 +428,7 @@ export default function App() {
       profile.ssoRegion,
       profile.accountId,
       profile.roleName,
+      profile.region,
     )
 
     // The session's accountName should be the CLEAN account name ("polaris-
@@ -553,6 +617,9 @@ export default function App() {
             selectedSession={selectedSession}
             onAddConnection={() => setScreen('accounts')}
             onNavigate={setScreen}
+            updateInfo={updateInfo}
+            onUpdateClick={() => setUpdaterDismissed(false)}
+            onDismissUpdate={() => setUpdateInfo(null)}
           />
         )
       case 'accounts':
@@ -596,6 +663,8 @@ export default function App() {
         )
       case 'activity':
         return <Activity events={activity} />
+      case 'news':
+        return <News onVisit={() => setNewsUnread(0)} />
       case 'settings':
         return <Settings />
       case 'docs':
@@ -614,6 +683,7 @@ export default function App() {
         onNavigate={setScreen}
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed(v => !v)}
+        newsUnread={newsUnread}
         sessions={sessions}
         selectedSession={selectedSession}
         onCloseDetail={() => setSelectedSession(null)}
@@ -627,7 +697,25 @@ export default function App() {
         {renderScreen()}
       </Shell>
 
-      {(!URL_MOCK || URL_UPDATER) && <UpdaterModal />}
+      {(!URL_MOCK || URL_UPDATER || URL_MOCK_UPDATE) && (
+        <UpdaterModal
+          dismissed={updaterDismissed}
+          onDismiss={() => {
+            if (updateInfo?.version) {
+              try { localStorage.setItem('cloudorbit.updaterDismissed', updateInfo.version) } catch {}
+            }
+            setUpdaterDismissed(true)
+          }}
+          onUpdateAvailable={(version, body) => {
+            setUpdateInfo({ version, body })
+            try {
+              if (localStorage.getItem('cloudorbit.updaterDismissed') === version) {
+                setUpdaterDismissed(true)
+              }
+            } catch {}
+          }}
+        />
+      )}
 
       <CommandPalette
         open={commandPaletteOpen}

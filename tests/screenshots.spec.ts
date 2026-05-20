@@ -416,3 +416,26 @@ test('orbit — 760×540 (minimum window)', async ({ page }) => {
   await goto(page, 'orbit')
   await snap(page, '21-orbit-minimum-window')
 })
+
+// ── Bell feature screenshots ──────────────────────────────────────────────────
+test('bell — dropdown open with news items', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.goto('/?mock=1&screen=orbit&news=1')
+  await page.waitForSelector('.text-text-primary', { timeout: 8000 })
+  await page.waitForTimeout(500)
+  await page.click('[data-testid="news-bell"]')
+  await page.waitForTimeout(300)
+  await snap(page, 'bell-01-dropdown-open')
+})
+
+test('bell — dropdown with update item after dismiss', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.goto('/?mock=1&screen=orbit&mockUpdate=1&news=1')
+  await page.waitForSelector('.text-text-primary', { timeout: 8000 })
+  await page.waitForTimeout(600)
+  const later = page.getByText('Later', { exact: true }).first()
+  if (await later.count() > 0) { await later.click(); await page.waitForTimeout(400) }
+  await page.click('[data-testid="news-bell"]')
+  await page.waitForTimeout(300)
+  await snap(page, 'bell-02-with-update-item')
+})

@@ -1,9 +1,16 @@
 import React from 'react'
 import type { Session } from '@/types'
+import { NewsBell } from '@/components/ui/NewsBell'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+
+type BellItem = { id: string; kind: 'update-available' | 'release' | 'announcement'; title: string; body?: string; date: string; url?: string }
 
 interface TitlebarProps {
   activeSessions: Session[]
+  bellItems?: BellItem[]
+  newsUnread?: number
+  onNewsMarkRead?: () => void
+  onTriggerUpdate?: () => void
 }
 
 // macOS renders traffic lights (close/min/max) at top-left ~12–72px when the
@@ -87,7 +94,13 @@ function WindowControls() {
   )
 }
 
-export function Titlebar({ activeSessions }: TitlebarProps) {
+export function Titlebar({
+  activeSessions,
+  bellItems = [],
+  newsUnread = 0,
+  onNewsMarkRead,
+  onTriggerUpdate,
+}: TitlebarProps) {
   const expiringCount = activeSessions.filter(s => {
     const diffMin = (new Date(s.expiresAt).getTime() - Date.now()) / 60000
     return diffMin > 0 && diffMin < 30
@@ -108,17 +121,27 @@ export function Titlebar({ activeSessions }: TitlebarProps) {
         <span className="font-display font-bold text-text-primary text-sm tracking-wide">CloudOrbit</span>
       </div>
 
-      {/* Right — status */}
-      <div className="flex items-center gap-3">
-        {expiringCount > 0 && (
+      {/* Right — news bell + session status */}
+      <div className="flex items-center gap-2">
+        <NewsBell
+          items={bellItems}
+          unreadCount={newsUnread}
+          loading={false}
+          onMarkAllRead={onNewsMarkRead ?? (() => {})}
+          onTriggerUpdate={onTriggerUpdate}
+        />
+
+        <div className="flex items-center gap-3">
+          {expiringCount > 0 && (
+            <div className="flex items-center gap-1.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-warning pulse-warning" />
+              <span className="text-warning text-xs font-medium">{expiringCount} expiring</span>
+            </div>
+          )}
           <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-warning pulse-warning" />
-            <span className="text-warning text-xs font-medium">{expiringCount} expiring</span>
+            <div className={`w-1.5 h-1.5 rounded-full ${activeCount > 0 ? 'bg-success' : 'bg-text-muted'}`} />
+            <span className="text-text-muted text-xs">{activeCount} active</span>
           </div>
-        )}
-        <div className="flex items-center gap-1.5">
-          <div className={`w-1.5 h-1.5 rounded-full ${activeCount > 0 ? 'bg-success' : 'bg-text-muted'}`} />
-          <span className="text-text-muted text-xs">{activeCount} active</span>
         </div>
       </div>
 

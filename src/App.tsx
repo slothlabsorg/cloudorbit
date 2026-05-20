@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { Screen, Session, SsoGroup, ClusterInfo, ActivityEvent, Profile } from '@/types'
 import { toMeta, type SessionMeta } from '@/lib/session'
 import { api } from '@/lib/tauri'
@@ -17,8 +17,9 @@ import { Docs } from '@/screens/Docs'
 import { Support } from '@/screens/Support'
 import { UpdaterModal } from '@/components/UpdaterModal'
 import { News } from '@/screens/News'
-import { getUnreadIds } from '@/lib/news'
+import { loadNews, markRead, getUnreadIds } from '@/lib/news'
 import { MOCK_FEED } from '@/data/news-mock'
+import type { NewsItem } from '@/types/news'
 
 interface LoginState {
   status: 'idle' | 'starting' | 'polling' | 'done' | 'error'
@@ -84,10 +85,11 @@ export default function App() {
     if (!v) return false
     try { return localStorage.getItem('cloudorbit.updaterDismissed') === v } catch { return false }
   })
-  const [newsUnread, setNewsUnread] = useState(() => {
-    if (!URL_MOCK_NEWS) return 0
-    return getUnreadIds(MOCK_FEED.items.filter(i => !i.expiresAt || new Date(i.expiresAt).getTime() > Date.now())).length
-  })
+  const validItems = MOCK_FEED.items.filter(i => !i.expiresAt || new Date(i.expiresAt).getTime() > Date.now())
+  const [newsItems, setNewsItems] = useState<NewsItem[]>(() => URL_MOCK_NEWS ? validItems : [])
+  const [newsUnread, setNewsUnread] = useState(() =>
+    URL_MOCK_NEWS ? getUnreadIds(validItems).length : 0
+  )
 
   // ── Favorites ─────────────────────────────────────────────────────────────
   // Role-level favorites, keyed by `${startUrl}|${accountId}|${roleName}` so
@@ -168,6 +170,38 @@ export default function App() {
       return next
     })
   }, [])
+
+  // ── News feed ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (URL_MOCK || URL_MOCK_NEWS) return
+    loadNews().then(items => {
+      setNewsItems(items)
+      setNewsUnread(getUnreadIds(items).length)
+    })
+  }, [])
+
+  // Bell items: synthetic update entry (when dismissed) + one per kind from news
+  const bellItems = useMemo(() => {
+    type BellItem = { id: string; kind: 'update-available' | 'release' | 'announcement'; title: string; body?: string; date: string; url?: string }
+    const items: BellItem[] = []
+    if (updateInfo && updaterDismissed) {
+      items.push({ id: 'update-available', kind: 'update-available', title: `v${updateInfo.version} is available`, body: 'Click to install the latest update', date: new Date().toISOString() })
+    }
+    const seen = new Set<string>()
+    for (const n of newsItems.filter(i => i.type !== 'ad')) {
+      const kind = n.type === 'changelog' ? 'release' : 'announcement'
+      if (seen.has(kind)) continue
+      seen.add(kind)
+      items.push({ id: n.id, kind, title: n.title, body: n.body.split('\n').filter(Boolean)[0] ?? '', date: n.publishedAt, url: n.action?.url })
+    }
+    return items
+  }, [newsItems, updateInfo, updaterDismissed])
+
+  const handleNewsMarkRead = useCallback(() => {
+    const ids = newsItems.map(i => i.id)
+    markRead(ids)
+    setNewsUnread(0)
+  }, [newsItems])
 
   // ── Session metadata persistence ──────────────────────────────────────────
   useEffect(() => {
@@ -684,6 +718,9 @@ export default function App() {
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed(v => !v)}
         newsUnread={newsUnread}
+        bellItems={bellItems}
+        onNewsMarkRead={handleNewsMarkRead}
+        onTriggerUpdate={() => setUpdaterDismissed(false)}
         sessions={sessions}
         selectedSession={selectedSession}
         onCloseDetail={() => setSelectedSession(null)}

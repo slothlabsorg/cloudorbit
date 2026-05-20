@@ -6,12 +6,17 @@ import { Sidebar } from './Sidebar'
 import { StatusBar } from './StatusBar'
 import { DetailPanel } from '@/components/ui/DetailPanel'
 
+type BellItem = { id: string; kind: 'update-available' | 'release' | 'announcement'; title: string; body?: string; date: string; url?: string }
+
 interface ShellProps {
   screen: Screen
   onNavigate: (screen: Screen) => void
   sidebarCollapsed: boolean
   onToggleSidebar: () => void
   newsUnread?: number
+  bellItems?: BellItem[]
+  onNewsMarkRead?: () => void
+  onTriggerUpdate?: () => void
   sessions: Session[]
   selectedSession: Session | null
   onCloseDetail: () => void
@@ -26,6 +31,7 @@ interface ShellProps {
 
 export function Shell({
   screen, onNavigate, sidebarCollapsed, onToggleSidebar, newsUnread,
+  bellItems, onNewsMarkRead, onTriggerUpdate,
   sessions, selectedSession, onCloseDetail, onRenewSession, onOpenConsole,
   onActivateCluster, onDetectClusters, activeCluster, activity, children,
 }: ShellProps) {
@@ -36,7 +42,13 @@ export function Shell({
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
-      <Titlebar activeSessions={sessions} />
+      <Titlebar
+        activeSessions={sessions}
+        bellItems={bellItems}
+        newsUnread={newsUnread}
+        onNewsMarkRead={onNewsMarkRead}
+        onTriggerUpdate={onTriggerUpdate}
+      />
 
       <div className="flex flex-1 overflow-hidden">
         <Sidebar

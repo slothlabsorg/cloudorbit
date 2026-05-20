@@ -396,8 +396,9 @@ test('news — feed with all card types', async ({ page }) => {
 })
 
 test('news — sidebar with unread badge', async ({ page }) => {
-  // Fresh localStorage = all items unread → badge shows on News nav item
-  await goto(page, 'orbit')
+  // ?news=1 activates mock feed so the sidebar badge is visible
+  await page.goto('/?mock=1&screen=orbit&news=1')
+  await page.waitForSelector('[data-testid="app-ready"], .text-text-primary', { timeout: 8000 })
   await page.waitForTimeout(400)
   await snap(page, '40-news-sidebar-unread-badge')
 })

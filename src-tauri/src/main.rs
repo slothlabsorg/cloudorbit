@@ -117,6 +117,10 @@ fn main() {
             commands::sso::list_accounts,
             // Credentials & profiles
             commands::credentials::assume_role,
+            commands::credentials::start_iam_session,
+            commands::credentials::assume_role_chained,
+            commands::credentials::assume_role_federated,
+            commands::credentials::read_profile_credentials,
             commands::credentials::write_sso_config,
             // EKS
             commands::eks::list_eks_clusters,

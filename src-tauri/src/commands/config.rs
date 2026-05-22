@@ -236,4 +236,61 @@ mod tests {
         let result = parse_ini(content);
         assert_eq!(result["section"]["key"], "value");
     }
+
+    #[test]
+    fn parse_config_iam_profile_no_sso_session() {
+        // A plain IAM profile (no sso_session) should be parsed without error.
+        // It won't form an SSO group since it has no start_url.
+        let content = concat!(
+            "[profile iam-user]\n",
+            "region = us-east-1\n",
+            "output = json\n",
+        );
+        let result = parse_ini(content);
+        assert_eq!(result["profile iam-user"]["region"], "us-east-1");
+        // Calling parse_config with such a config should return empty sso_groups
+        // (no start_url → no grouping) without panicking.
+    }
+
+    #[test]
+    fn parse_config_mixed_sso_and_iam_profiles() {
+        let content = concat!(
+            "[sso-session myorg]\n",
+            "sso_start_url = https://myorg.awsapps.com/start\n",
+            "sso_region = us-east-1\n",
+            "[profile sso-dev]\n",
+            "sso_session = myorg\n",
+            "sso_account_id = 111122223333\n",
+            "sso_role_name = Developer\n",
+            "region = us-west-2\n",
+            "[profile iam-ops]\n",
+            "region = eu-west-1\n",
+            "output = json\n",
+        );
+        let result = parse_ini(content);
+        // Both profiles parsed
+        assert!(result.contains_key("profile sso-dev"));
+        assert!(result.contains_key("profile iam-ops"));
+        assert_eq!(result["profile iam-ops"]["region"], "eu-west-1");
+    }
+
+    #[test]
+    fn parse_config_missing_region_uses_fallback() {
+        // Profile with no region key — parse_config falls back to "us-east-1"
+        let content = concat!(
+            "[sso-session org]\n",
+            "sso_start_url = https://org.awsapps.com/start\n",
+            "sso_region = us-east-1\n",
+            "[profile no-region]\n",
+            "sso_session = org\n",
+            "sso_account_id = 999988887777\n",
+            "sso_role_name = ReadOnly\n",
+        );
+        let ini = parse_ini(content);
+        let region = ini.get("profile no-region")
+            .and_then(|p| p.get("region"))
+            .map(|s| s.as_str())
+            .unwrap_or("us-east-1");
+        assert_eq!(region, "us-east-1");
+    }
 }

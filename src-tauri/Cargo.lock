@@ -770,6 +770,7 @@ dependencies = [
  "aws-sdk-eks",
  "aws-sdk-sso",
  "aws-sdk-ssooidc",
+ "aws-sdk-sts",
  "aws-smithy-runtime",
  "chrono",
  "dirs 5.0.1",
@@ -788,6 +789,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-shell",
  "tauri-plugin-updater",
+ "tempfile",
  "tokio",
 ]
 

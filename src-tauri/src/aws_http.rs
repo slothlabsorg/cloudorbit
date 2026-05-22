@@ -24,6 +24,29 @@ pub async fn config_for_region(region: &str) -> SdkConfig {
         .await
 }
 
+/// Like `config_for_region_with_creds` but also respects `AWS_ENDPOINT_URL`
+/// so integration tests can point at LocalStack without code changes.
+pub async fn config_for_region_with_creds_and_endpoint(
+    region: &str,
+    creds: aws_credential_types::Credentials,
+) -> SdkConfig {
+    let https = hyper_tls::HttpsConnector::new();
+    let http_client = HyperClientBuilder::new().build(https);
+
+    let mut builder = aws_config::defaults(BehaviorVersion::latest())
+        .http_client(http_client)
+        .region(Region::new(region.to_string()))
+        .credentials_provider(creds);
+
+    if let Ok(endpoint) = std::env::var("AWS_ENDPOINT_URL") {
+        if !endpoint.is_empty() {
+            builder = builder.endpoint_url(endpoint);
+        }
+    }
+
+    builder.load().await
+}
+
 pub async fn config_for_region_with_creds(
     region: &str,
     creds: aws_credential_types::Credentials,

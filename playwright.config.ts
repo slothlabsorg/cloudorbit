@@ -29,6 +29,11 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
     {
+      name: 'update-flow',
+      testMatch: 'tests/update-flow.spec.ts',
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
+    },
+    {
       name: 'interactions',
       testMatch: 'tests/interactions.spec.ts',
       use: { ...devices['Desktop Chrome'] },

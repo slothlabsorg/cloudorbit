@@ -1,0 +1,256 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - img "CloudOrbit" [ref=e6]
+        - generic [ref=e7]: CloudOrbit
+      - generic [ref=e8]:
+        - button "News — 5 unread" [ref=e10] [cursor=pointer]:
+          - img [ref=e11]
+        - generic [ref=e15]:
+          - generic [ref=e18]: 1 expiring
+          - generic [ref=e21]: 3 active
+      - generic [ref=e22]:
+        - button "Minimize" [ref=e23] [cursor=pointer]:
+          - img [ref=e24]
+        - button "Maximize" [ref=e25] [cursor=pointer]:
+          - img [ref=e26]
+        - button "Close" [ref=e28] [cursor=pointer]:
+          - img [ref=e29]
+    - generic [ref=e31]:
+      - generic [ref=e32]:
+        - generic [ref=e33]:
+          - button "Orbit" [ref=e34] [cursor=pointer]:
+            - img [ref=e36]
+            - generic [ref=e39]: Orbit
+          - button "Accounts" [ref=e41] [cursor=pointer]:
+            - img [ref=e43]
+            - generic [ref=e47]: Accounts
+          - button "Sessions" [ref=e48] [cursor=pointer]:
+            - img [ref=e50]
+            - generic [ref=e52]: Sessions
+          - button "Clusters" [ref=e53] [cursor=pointer]:
+            - img [ref=e55]
+            - generic [ref=e57]: Clusters
+          - button "Activity" [ref=e58] [cursor=pointer]:
+            - img [ref=e60]
+            - generic [ref=e62]: Activity
+          - button "News 5" [ref=e63] [cursor=pointer]:
+            - img [ref=e65]
+            - generic [ref=e69]: News
+            - generic [ref=e70]: "5"
+        - generic [ref=e71]:
+          - button "Settings" [ref=e72] [cursor=pointer]:
+            - img [ref=e74]
+            - generic [ref=e77]: Settings
+          - button "Docs" [ref=e78] [cursor=pointer]:
+            - img [ref=e80]
+            - generic [ref=e83]: Docs
+          - button "Support us" [ref=e84] [cursor=pointer]:
+            - img [ref=e86]
+            - generic [ref=e88]: Support us
+          - button "3 active Acme Production Admin" [ref=e89] [cursor=pointer]:
+            - generic [ref=e93]: 3 active
+            - generic [ref=e98]:
+              - paragraph [ref=e99]: Acme Production
+              - paragraph [ref=e100]: Admin
+          - button "Collapse" [ref=e101] [cursor=pointer]:
+            - img [ref=e103]
+            - generic [ref=e105]: Collapse
+      - generic [ref=e108]:
+        - generic [ref=e109]:
+          - generic [ref=e110]:
+            - heading "Overview" [level=1] [ref=e111]
+            - paragraph [ref=e112]: Your cloud access at a glance.
+          - generic [ref=e113]:
+            - button "Add Connection" [ref=e114] [cursor=pointer]:
+              - img [ref=e115]
+              - text: Add Connection
+            - button "Manage Accounts →" [ref=e116] [cursor=pointer]
+        - generic [ref=e117]:
+          - generic [ref=e118]:
+            - img [ref=e119]
+            - generic [ref=e121]:
+              - generic [ref=e122]:
+                - generic [ref=e123]: Update available
+                - generic [ref=e124]: v1.1.0
+              - paragraph [ref=e125]: We ship frequently — this is an early release with constant improvements
+            - generic [ref=e126]:
+              - button "Later" [ref=e127] [cursor=pointer]
+              - button "Update Now" [ref=e128] [cursor=pointer]
+          - generic [ref=e129]:
+            - button "Connections 1" [ref=e130] [cursor=pointer]:
+              - generic [ref=e131]: Connections
+              - generic [ref=e132]: "1"
+            - button "Accounts 4" [ref=e133] [cursor=pointer]:
+              - generic [ref=e134]: Accounts
+              - generic [ref=e135]: "4"
+            - button "Active 3" [ref=e136] [cursor=pointer]:
+              - generic [ref=e137]: Active
+              - generic [ref=e138]: "3"
+            - button "Expiring 0" [ref=e139] [cursor=pointer]:
+              - generic [ref=e140]: Expiring
+              - generic [ref=e141]: "0"
+            - button "★ Favorites 0" [ref=e142] [cursor=pointer]:
+              - generic [ref=e143]: ★ Favorites
+              - generic [ref=e144]: "0"
+          - generic [ref=e145]:
+            - generic [ref=e146]:
+              - paragraph [ref=e147]: Session timeline
+              - paragraph [ref=e148]: 3 active
+            - generic [ref=e149]:
+              - generic [ref=e150]:
+                - generic [ref=e151]:
+                  - generic [ref=e152]: DEV
+                  - generic [ref=e153]: Platform Shared
+                  - generic [ref=e154]: / ReadOnly
+                - generic [ref=e157]: 22m
+              - generic [ref=e158]:
+                - generic [ref=e159]:
+                  - generic [ref=e160]: STAGING
+                  - generic [ref=e161]: Acme Staging
+                  - generic [ref=e162]: / Developer
+                - generic [ref=e165]: 70m
+              - generic [ref=e166]:
+                - generic [ref=e167]:
+                  - generic [ref=e168]: PROD
+                  - generic [ref=e169]: Acme Production
+                  - generic [ref=e170]: / Admin
+                - generic [ref=e173]: 83m
+          - generic [ref=e174]:
+            - button "active 3" [ref=e175] [cursor=pointer]:
+              - text: active
+              - generic [ref=e176]: "3"
+            - button "favorites 0" [ref=e177] [cursor=pointer]:
+              - text: favorites
+              - generic [ref=e178]: "0"
+            - button "recent 3" [ref=e179] [cursor=pointer]:
+              - text: recent
+              - generic [ref=e180]: "3"
+          - generic [ref=e181]:
+            - generic [ref=e182] [cursor=pointer]:
+              - generic [ref=e183]:
+                - generic [ref=e184]: UNKNOWN
+                - generic [ref=e185]:
+                  - paragraph [ref=e186]: Platform Shared
+                  - paragraph [ref=e187]: ReadOnly
+                - button "Add to favorites" [ref=e188]:
+                  - img [ref=e189]
+              - generic [ref=e191]:
+                - generic [ref=e192]: ••••1234
+                - generic [ref=e193]: us-west-2
+              - generic [ref=e195]:
+                - generic [ref=e198]: Active
+                - generic [ref=e199]: 22m left
+              - generic [ref=e202]:
+                - button "Renew" [ref=e203]
+                - button "Open AWS Console" [ref=e204]:
+                  - img [ref=e205]
+                - button "Copy credentials (export AWS_ACCESS_KEY_ID=...)" [ref=e209]:
+                  - img [ref=e210]
+                - button "Detect EKS clusters" [ref=e213]:
+                  - img [ref=e214]
+            - generic [ref=e217] [cursor=pointer]:
+              - generic [ref=e218]:
+                - generic [ref=e219]: STAGING
+                - generic [ref=e220]:
+                  - paragraph [ref=e221]: Acme Staging
+                  - paragraph [ref=e222]: Developer
+                - button "Add to favorites" [ref=e223]:
+                  - img [ref=e224]
+              - generic [ref=e226]:
+                - generic [ref=e227]: ••••0123
+                - generic [ref=e228]: us-east-1
+              - generic [ref=e230]:
+                - generic [ref=e233]: Active
+                - generic [ref=e234]: 70m left
+              - generic [ref=e237]:
+                - button "Renew" [ref=e238]
+                - button "Open AWS Console" [ref=e239]:
+                  - img [ref=e240]
+                - button "Copy credentials (export AWS_ACCESS_KEY_ID=...)" [ref=e244]:
+                  - img [ref=e245]
+                - button "Detect EKS clusters" [ref=e248]:
+                  - img [ref=e249]
+              - generic [ref=e252]:
+                - paragraph [ref=e253]: 1 cluster
+                - generic [ref=e255]: staging-cluster
+            - generic [ref=e256] [cursor=pointer]:
+              - generic [ref=e257]:
+                - generic [ref=e258]: PROD
+                - generic [ref=e259]:
+                  - paragraph [ref=e260]: Acme Production
+                  - paragraph [ref=e261]: Admin
+                - button "Add to favorites" [ref=e262]:
+                  - img [ref=e263]
+              - generic [ref=e265]:
+                - generic [ref=e266]: ••••9012
+                - generic [ref=e267]: us-east-1
+              - generic [ref=e269]:
+                - generic [ref=e272]: Active
+                - generic [ref=e273]: 83m left
+              - generic [ref=e276]:
+                - button "Renew" [ref=e277]
+                - button "Open AWS Console" [ref=e278]:
+                  - img [ref=e279]
+                - button "Copy credentials (export AWS_ACCESS_KEY_ID=...)" [ref=e283]:
+                  - img [ref=e284]
+                - button "Detect EKS clusters" [ref=e287]:
+                  - img [ref=e288]
+              - generic [ref=e291]:
+                - paragraph [ref=e292]: 1 cluster
+                - generic [ref=e294]: prod-cluster
+    - generic [ref=e295]:
+      - button "1/3 Acme Production / Admin us-east-1 1h 22m" [ref=e297] [cursor=pointer]:
+        - generic [ref=e298]:
+          - generic [ref=e299]:
+            - generic [ref=e301]: 1/3
+            - generic [ref=e302]: Acme Production
+            - generic [ref=e303]: /
+            - generic [ref=e304]: Admin
+          - generic [ref=e305]: us-east-1
+          - generic [ref=e306]: 1h 22m
+      - generic [ref=e307]:
+        - generic [ref=e308]:
+          - text: Made by
+          - button "SlothLabs" [ref=e309] [cursor=pointer]
+          - generic [ref=e310]: ·
+          - button "☕ Support" [ref=e311] [cursor=pointer]
+        - generic [ref=e312]: v1.0.0
+  - generic [ref=e315]:
+    - generic [ref=e316]:
+      - img "CloudOrbit" [ref=e318]
+      - generic [ref=e319]:
+        - heading "Update Available" [level=2] [ref=e320]
+        - paragraph [ref=e321]: Version 1.1.0 is ready to install
+        - paragraph [ref=e322]: We ship fast — expect frequent releases
+    - generic [ref=e323]:
+      - paragraph [ref=e325]: What's new
+      - generic [ref=e327]:
+        - paragraph [ref=e328]: What's new in v1.1.0
+        - generic [ref=e329]:
+          - generic [ref=e330]: •
+          - generic [ref=e331]: Session persistence across restarts
+        - generic [ref=e332]:
+          - generic [ref=e333]: •
+          - generic [ref=e334]: Region selector when starting sessions
+        - generic [ref=e335]:
+          - generic [ref=e336]: •
+          - generic [ref=e337]: IAM / Chained / Federated auth backends
+        - generic [ref=e338]:
+          - generic [ref=e339]: •
+          - generic [ref=e340]: Sidebar cycles all active sessions
+        - generic [ref=e341]:
+          - generic [ref=e342]: •
+          - generic [ref=e343]: Environment tag dropdown no longer clips on last row
+        - generic [ref=e344]:
+          - generic [ref=e345]: •
+          - generic [ref=e346]: Credentials file now includes selected region
+    - paragraph [ref=e347]: CloudOrbit is in early release — we're actively building it and shipping improvements constantly.
+    - generic [ref=e348]:
+      - button "Later" [ref=e349] [cursor=pointer]
+      - button "Update Now" [ref=e350] [cursor=pointer]
+```

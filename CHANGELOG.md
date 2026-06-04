@@ -6,6 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ---
 
+## [1.0.3] — 2026-06-03
+
+Test release — same features as 1.0.2. Install 1.0.2 first to test the in-app update flow.
+
+### Improvements
+
+- **Check for updates button** — gear/refresh icon in the titlebar lets you manually trigger an update check at any time.
+- **Persistent update reminder** — the "update available" bell entry now has an × to permanently dismiss it; clicking "Later" only closes the modal, the bell reminder stays.
+- **Scoped update modal** — `data-testid="updater-modal"` added; all E2E tests now scope to the modal container (fixes false positives from the Orbit inline banner).
+
+---
+
+## [1.0.2] — 2026-06-03
+
+### Improvements
+
+- **Check for updates button** — gear/refresh icon in the titlebar lets you manually trigger an update check at any time.
+- **Persistent update reminder** — the "update available" bell entry now has an × to permanently dismiss it; clicking "Later" only closes the modal, the bell reminder stays.
+- **Scoped update modal** — `data-testid="updater-modal"` added; all E2E tests now scope to the modal container (fixes false positives from the Orbit inline banner).
+
+---
+
 ## [1.0.0] — 2026-05-09
 
 First public release.

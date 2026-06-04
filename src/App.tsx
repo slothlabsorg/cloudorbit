@@ -15,7 +15,7 @@ import { Activity } from '@/screens/Activity'
 import { Settings } from '@/screens/Settings'
 import { Docs } from '@/screens/Docs'
 import { Support } from '@/screens/Support'
-import { UpdaterModal } from '@/components/UpdaterModal'
+import { UpdaterModal, type UpdaterModalHandle } from '@/components/UpdaterModal'
 import { News } from '@/screens/News'
 import { loadNews, markRead, getUnreadIds } from '@/lib/news'
 import { MOCK_FEED } from '@/data/news-mock'
@@ -77,6 +77,7 @@ export default function App() {
   const [loginState, setLoginState] = useState<Record<string, LoginState>>({})
   const [activity, setActivity] = useState<ActivityEvent[]>(URL_MOCK ? mockActivity : [])
   const [activeCluster, setActiveCluster] = useState<ClusterInfo | null>(null)
+  const updaterRef = useRef<UpdaterModalHandle>(null)
   const [updateInfo, setUpdateInfo] = useState<{ version: string; body: string | null } | null>(
     URL_NEWS ? MOCK_NEWS_INFO : URL_MOCK_UPDATE ? { version: URL_MOCK_UPDATE_VER, body: null } : null
   )
@@ -202,6 +203,15 @@ export default function App() {
     markRead(ids)
     setNewsUnread(0)
   }, [newsItems])
+
+  const handleCheckUpdates = useCallback(() => {
+    setUpdaterDismissed(false)
+    updaterRef.current?.checkForUpdate()
+  }, [])
+
+  const handleDismissUpdate = useCallback(() => {
+    setUpdateInfo(null)
+  }, [])
 
   // ── Session metadata persistence ──────────────────────────────────────────
   useEffect(() => {
@@ -721,6 +731,8 @@ export default function App() {
         bellItems={bellItems}
         onNewsMarkRead={handleNewsMarkRead}
         onTriggerUpdate={() => setUpdaterDismissed(false)}
+        onDismissUpdate={handleDismissUpdate}
+        onCheckUpdates={handleCheckUpdates}
         sessions={sessions}
         selectedSession={selectedSession}
         onCloseDetail={() => setSelectedSession(null)}
@@ -736,6 +748,7 @@ export default function App() {
 
       {(!URL_MOCK || URL_UPDATER || URL_MOCK_UPDATE) && (
         <UpdaterModal
+          ref={updaterRef}
           dismissed={updaterDismissed}
           onDismiss={() => {
             if (updateInfo?.version) {

@@ -15,9 +15,8 @@ interface Props {
   unreadCount: number
   loading: boolean
   onMarkAllRead: () => void
-  // Optional: when the user clicks the "Update now" item we route them to
-  // the existing UpdateBanner install flow rather than re-implementing it.
   onTriggerUpdate?: () => void
+  onDismissUpdate?: () => void
 }
 
 function timeAgo(iso: string): string {
@@ -40,7 +39,7 @@ function kindLabel(kind: OldNewsItem['kind']): { label: string; cls: string } {
   }
 }
 
-export function NewsBell({ items, unreadCount, loading, onMarkAllRead, onTriggerUpdate }: Props) {
+export function NewsBell({ items, unreadCount, loading, onMarkAllRead, onTriggerUpdate, onDismissUpdate }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -147,6 +146,19 @@ export function NewsBell({ items, unreadCount, loading, onMarkAllRead, onTrigger
                         {k.label}
                       </span>
                       <span className="text-[10px] text-text-muted ml-auto">{timeAgo(item.date)}</span>
+                      {item.kind === 'update-available' && onDismissUpdate && (
+                        <button
+                          data-testid="news-dismiss-update"
+                          aria-label="Dismiss update notification"
+                          onClick={e => { e.stopPropagation(); onDismissUpdate(); setOpen(false) }}
+                          onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); onDismissUpdate(); setOpen(false) } }}
+                          className="p-0.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-surface transition-colors flex-shrink-0"
+                        >
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                            <path d="M1 1l8 8M9 1L1 9"/>
+                          </svg>
+                        </button>
+                      )}
                     </div>
                     <p className="text-[12px] font-semibold text-text-primary leading-tight mb-0.5">{item.title}</p>
                     {item.body && (

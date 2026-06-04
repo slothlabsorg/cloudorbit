@@ -11,6 +11,8 @@ interface TitlebarProps {
   newsUnread?: number
   onNewsMarkRead?: () => void
   onTriggerUpdate?: () => void
+  onDismissUpdate?: () => void
+  onCheckUpdates?: () => void
 }
 
 // macOS renders traffic lights (close/min/max) at top-left ~12–72px when the
@@ -100,7 +102,18 @@ export function Titlebar({
   newsUnread = 0,
   onNewsMarkRead,
   onTriggerUpdate,
+  onDismissUpdate,
+  onCheckUpdates,
 }: TitlebarProps) {
+  const [checkingSpin, setCheckingSpin] = React.useState(false)
+
+  const handleCheckUpdates = () => {
+    if (!onCheckUpdates) return
+    setCheckingSpin(true)
+    onCheckUpdates()
+    setTimeout(() => setCheckingSpin(false), 2000)
+  }
+
   const expiringCount = activeSessions.filter(s => {
     const diffMin = (new Date(s.expiresAt).getTime() - Date.now()) / 60000
     return diffMin > 0 && diffMin < 30
@@ -123,12 +136,35 @@ export function Titlebar({
 
       {/* Right — news bell + session status */}
       <div className="flex items-center gap-2">
+        {onCheckUpdates && (
+          <button
+            type="button"
+            data-testid="check-updates-btn"
+            aria-label="Check for updates"
+            title="Check for updates"
+            onClick={handleCheckUpdates}
+            className="p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-surface transition-colors"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            <svg
+              width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+              className={checkingSpin ? 'animate-spin' : ''}
+            >
+              <path d="M21 12a9 9 0 0 1-9 9m0-18a9 9 0 0 1 9 9"/>
+              <path d="M12 3v3m0 12v3M3 12h3m12 0h3" opacity=".4"/>
+              <path d="M17.66 6.34l-2.12 2.12M8.46 15.54l-2.12 2.12" opacity=".4"/>
+            </svg>
+          </button>
+        )}
+
         <NewsBell
           items={bellItems}
           unreadCount={newsUnread}
           loading={false}
           onMarkAllRead={onNewsMarkRead ?? (() => {})}
           onTriggerUpdate={onTriggerUpdate}
+          onDismissUpdate={onDismissUpdate}
         />
 
         <div className="flex items-center gap-3">

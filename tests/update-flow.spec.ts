@@ -20,37 +20,44 @@ async function snap(page: Page, name: string) {
 async function openWithUpdater(page: Page, extra = '') {
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.goto(`/?mock=1&updater=1${extra}`)
-  await page.waitForSelector('text=Update Available', { timeout: 8000 })
+  await page.waitForSelector('[data-testid="updater-modal"]', { timeout: 8000 })
   await page.waitForTimeout(300)
+}
+
+// Scope all modal interactions to the updater-modal container to avoid
+// ambiguity with the Orbit screen inline update banner.
+function modal(page: Page) {
+  return page.locator('[data-testid="updater-modal"]')
 }
 
 test.describe('UpdaterModal', () => {
   test('01 — modal appears on startup', async ({ page }) => {
     await openWithUpdater(page)
-    await expect(page.getByText('Update Available', { exact: true })).toBeVisible()
-    await expect(page.getByText(/ready to install/i)).toBeVisible()
+    await expect(modal(page)).toBeVisible()
+    await expect(modal(page).getByText('Update Available', { exact: true })).toBeVisible()
+    await expect(modal(page).getByText(/ready to install/i)).toBeVisible()
     await snap(page, 'upd-01-modal-appears')
   })
 
   test('02 — changelog section visible', async ({ page }) => {
     await openWithUpdater(page)
-    await expect(page.getByText(/what.s new/i).first()).toBeVisible()
-    const body = await page.locator('body').innerText()
+    await expect(modal(page).getByText(/what.s new/i).first()).toBeVisible()
+    const body = await modal(page).innerText()
     expect(body.toLowerCase()).toMatch(/session|region|iam|sidebar|credentials/)
     await snap(page, 'upd-02-changelog-visible')
   })
 
   test('03 — Later dismisses modal', async ({ page }) => {
     await openWithUpdater(page)
-    await page.getByText('Later', { exact: true }).click()
+    await modal(page).getByText('Later', { exact: true }).click()
     await page.waitForTimeout(400)
-    await expect(page.getByText('Update Available', { exact: true })).not.toBeVisible()
+    await expect(modal(page)).not.toBeVisible()
     await snap(page, 'upd-03-modal-dismissed')
   })
 
   test('04 — bell dot visible after dismiss', async ({ page }) => {
     await openWithUpdater(page, '&news=1')
-    await page.getByText('Later', { exact: true }).click()
+    await modal(page).getByText('Later', { exact: true }).click()
     await page.waitForTimeout(500)
     await expect(page.locator('[data-testid="news-bell-dot"]')).toBeVisible()
     await snap(page, 'upd-04-bell-dot')
@@ -58,7 +65,7 @@ test.describe('UpdaterModal', () => {
 
   test('05 — bell dropdown shows Update item after dismiss', async ({ page }) => {
     await openWithUpdater(page, '&news=1')
-    await page.getByText('Later', { exact: true }).click()
+    await modal(page).getByText('Later', { exact: true }).click()
     await page.waitForTimeout(500)
     await page.locator('[data-testid="news-bell"]').click()
     await page.waitForTimeout(300)
@@ -69,13 +76,13 @@ test.describe('UpdaterModal', () => {
 
   test('06 — clicking Update item reopens modal', async ({ page }) => {
     await openWithUpdater(page, '&news=1')
-    await page.getByText('Later', { exact: true }).click()
+    await modal(page).getByText('Later', { exact: true }).click()
     await page.waitForTimeout(500)
     await page.locator('[data-testid="news-bell"]').click()
     await page.waitForTimeout(300)
     await page.locator('[data-testid="news-item-update-available"]').click()
     await page.waitForTimeout(400)
-    await expect(page.getByText('Update Available', { exact: true })).toBeVisible()
+    await expect(modal(page)).toBeVisible()
     await snap(page, 'upd-06-modal-reopened')
   })
 
@@ -90,20 +97,46 @@ test.describe('UpdaterModal', () => {
     await expect(page.locator('[data-testid="news-dropdown"]')).toBeVisible()
     await snap(page, 'upd-07-bell-news-only')
   })
+
+  test('08 — bell X button permanently removes update item', async ({ page }) => {
+    await openWithUpdater(page, '&news=1')
+    await modal(page).getByText('Later', { exact: true }).click()
+    await page.waitForTimeout(500)
+    // Open bell — update item visible
+    await page.locator('[data-testid="news-bell"]').click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('[data-testid="news-item-update-available"]')).toBeVisible()
+    // Click X on update item — closes dropdown
+    await page.locator('[data-testid="news-dismiss-update"]').click()
+    await page.waitForTimeout(400)
+    // Re-open bell — update item must be gone (X was a permanent dismiss)
+    await page.locator('[data-testid="news-bell"]').click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('[data-testid="news-item-update-available"]')).not.toBeVisible()
+    await snap(page, 'upd-08-bell-x-dismiss')
+  })
+
+  test('09 — check-updates gear button visible', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await page.goto('/?mock=1')
+    await page.waitForSelector('[data-testid="check-updates-btn"]', { timeout: 8000 })
+    await expect(page.locator('[data-testid="check-updates-btn"]')).toBeVisible()
+    await snap(page, 'upd-09-gear-button')
+  })
 })
 
 test('10 — full update flow', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.goto('/?mock=1&updater=1&news=1')
-  await page.waitForSelector('text=Update Available', { timeout: 8000 })
+  await page.waitForSelector('[data-testid="updater-modal"]', { timeout: 8000 })
   await page.waitForTimeout(300)
 
-  await expect(page.getByText('Update Available')).toBeVisible()
+  await expect(modal(page)).toBeVisible()
   await snap(page, 'upd-10a-modal')
 
-  await page.getByText('Later', { exact: true }).click()
+  await modal(page).getByText('Later', { exact: true }).click()
   await page.waitForTimeout(500)
-  await expect(page.getByText('Update Available')).not.toBeVisible()
+  await expect(modal(page)).not.toBeVisible()
   await snap(page, 'upd-10b-dismissed')
 
   await expect(page.locator('[data-testid="news-bell-dot"]')).toBeVisible()
@@ -116,6 +149,6 @@ test('10 — full update flow', async ({ page }) => {
 
   await page.locator('[data-testid="news-item-update-available"]').click()
   await page.waitForTimeout(400)
-  await expect(page.getByText('Update Available')).toBeVisible()
+  await expect(modal(page)).toBeVisible()
   await snap(page, 'upd-10e-reopened')
 })

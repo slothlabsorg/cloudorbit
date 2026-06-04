@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 interface UpdateInfo {
@@ -37,7 +37,12 @@ interface UpdaterModalProps {
   onUpdateAvailable?: (version: string, body: string | null) => void
 }
 
-export function UpdaterModal({ dismissed: dismissedProp, onDismiss, onUpdateAvailable }: UpdaterModalProps = {}) {
+export interface UpdaterModalHandle {
+  checkForUpdate: () => void
+}
+
+export const UpdaterModal = forwardRef<UpdaterModalHandle, UpdaterModalProps>(
+function UpdaterModal({ dismissed: dismissedProp, onDismiss, onUpdateAvailable } = {}, ref) {
   const [state, setState] = useState<UpdaterState>(
     getMockParam() ? { status: 'available', info: MOCK_UPDATE } : { status: 'idle' }
   )
@@ -71,6 +76,8 @@ export function UpdaterModal({ dismissed: dismissedProp, onDismiss, onUpdateAvai
       // Not in Tauri or no update — silent
     }
   }, [])
+
+  useImperativeHandle(ref, () => ({ checkForUpdate }), [checkForUpdate])
 
   // Check 3 s after mount
   useEffect(() => {
@@ -136,6 +143,7 @@ export function UpdaterModal({ dismissed: dismissedProp, onDismiss, onUpdateAvai
             exit={{ opacity: 0 }}
           >
             <motion.div
+              data-testid="updater-modal"
               className="bg-bg-elevated border border-border rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
               initial={{ scale: 0.92, y: 16 }}
               animate={{ scale: 1, y: 0 }}
@@ -232,7 +240,7 @@ export function UpdaterModal({ dismissed: dismissedProp, onDismiss, onUpdateAvai
       )}
     </AnimatePresence>
   )
-}
+})
 
 function LogoOrIcon() {
   const [failed, setFailed] = useState(false)

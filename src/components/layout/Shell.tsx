@@ -17,6 +17,8 @@ interface ShellProps {
   bellItems?: BellItem[]
   onNewsMarkRead?: () => void
   onTriggerUpdate?: () => void
+  onDismissUpdate?: () => void
+  onCheckUpdates?: () => void
   sessions: Session[]
   selectedSession: Session | null
   onCloseDetail: () => void
@@ -31,7 +33,7 @@ interface ShellProps {
 
 export function Shell({
   screen, onNavigate, sidebarCollapsed, onToggleSidebar, newsUnread,
-  bellItems, onNewsMarkRead, onTriggerUpdate,
+  bellItems, onNewsMarkRead, onTriggerUpdate, onDismissUpdate, onCheckUpdates,
   sessions, selectedSession, onCloseDetail, onRenewSession, onOpenConsole,
   onActivateCluster, onDetectClusters, activeCluster, activity, children,
 }: ShellProps) {
@@ -48,6 +50,8 @@ export function Shell({
         newsUnread={newsUnread}
         onNewsMarkRead={onNewsMarkRead}
         onTriggerUpdate={onTriggerUpdate}
+        onDismissUpdate={onDismissUpdate}
+        onCheckUpdates={onCheckUpdates}
       />
 
       <div className="flex flex-1 overflow-hidden">

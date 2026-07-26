@@ -122,6 +122,17 @@ export const api = {
   setDefaultSession: (accessKeyId: string, secretAccessKey: string, sessionToken: string, region: string) =>
     invoke<void>('set_default_session', { accessKeyId, secretAccessKey, sessionToken, region }),
 
+  listCredentialSessions: () =>
+    invoke<Array<{
+      profileName: string
+      accessKeyId: string
+      secretAccessKey: string
+      sessionToken: string
+      region: string | null
+      expiresAt: string | null
+      isDefault: boolean
+    }>>('list_credential_sessions'),
+
   writeSsoConfig: (startUrl: string, ssoRegion: string, accounts: AccountInfo[]) =>
     invoke<{ sessionName: string; profileCount: number }>('write_sso_config', {
       startUrl, ssoRegion,

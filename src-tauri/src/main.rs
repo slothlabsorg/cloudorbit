@@ -124,6 +124,7 @@ fn main() {
             commands::credentials::write_sso_config,
             commands::credentials::set_default_session,
             commands::credentials::clear_session_credentials,
+            commands::credentials::list_credential_sessions,
             // EKS
             commands::eks::list_eks_clusters,
             commands::eks::update_kubeconfig,

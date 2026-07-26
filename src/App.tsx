@@ -282,36 +282,97 @@ export default function App() {
           })),
         })))
 
-        // Restore sessions from persisted metadata + credentials on disk.
-        // Only sessions whose expiresAt is still in the future are restored.
-        // If credentials are no longer on disk the session is silently dropped.
+        // Restore sessions from ~/.aws/credentials + persisted metadata.
+        // Strategy:
+        //  1. list_credential_sessions reads all active STS profiles from disk
+        //     (those with a cloudorbit-expires-at comment still in the future)
+        //  2. We cross-reference with localStorage sessionMeta for rich display
+        //     data (accountName, environment, isFavorite, isDefault, etc.)
+        //  3. Any session in disk but not in meta gets basic defaults
+        // This way sessions survive app restarts even if localStorage was cleared.
         try {
-          const raw = localStorage.getItem('cloudorbit.sessionMeta')
-          if (raw) {
-            const meta: SessionMeta[] = JSON.parse(raw)
+          const diskSessions = await api.listCredentialSessions()
+
+          if (diskSessions.length > 0) {
+            // Load localStorage meta for enrichment
+            const metaRaw = localStorage.getItem('cloudorbit.sessionMeta')
+            const metaList: SessionMeta[] = metaRaw ? JSON.parse(metaRaw) : []
+            const metaByProfile = new Map(metaList.map(m => [m.profileName, m]))
+
             const now = Date.now()
-            const valid = meta.filter(m => new Date(m.expiresAt).getTime() > now)
-            if (valid.length > 0) {
-              const results = await Promise.all(
-                valid.map(async m => {
-                  try {
-                    const creds = await api.readProfileCredentials(m.profileName)
-                    return { ...m, ...creds, isDefault: m.isDefault ?? false } as Session
-                  } catch {
-                    return null
-                  }
-                })
-              )
-              const restored = results.filter((s): s is Session => s !== null)
-              if (restored.length > 0) {
-                // Keep sessionIdCounter above any restored ID to avoid collisions
-                const maxId = Math.max(...restored.map(s => parseInt(s.id) || 0))
-                if (maxId >= sessionIdCounter) sessionIdCounter = maxId
-                setSessions(restored)
+            let counter = sessionIdCounter
+
+            const restored: Session[] = diskSessions
+              .filter(ds => {
+                // Double-check expiry (backend already filtered, but be safe)
+                if (!ds.expiresAt) return true
+                return new Date(ds.expiresAt).getTime() > now
+              })
+              .map(ds => {
+                const meta = metaByProfile.get(ds.profileName)
+                const id = meta?.id ?? String(++counter)
+                const expiresAt = ds.expiresAt
+                  ?? meta?.expiresAt
+                  ?? new Date(now + 8 * 3600 * 1000).toISOString()
+
+                // Parse accountId and roleName from profile name "accountId-roleName"
+                const dashIdx = ds.profileName.indexOf('-')
+                const parsedAccountId = dashIdx > 0 ? ds.profileName.slice(0, dashIdx) : ds.profileName
+                const parsedRoleName  = dashIdx > 0 ? ds.profileName.slice(dashIdx + 1) : ''
+
+                return {
+                  id,
+                  accountId:       meta?.accountId       ?? parsedAccountId,
+                  accountName:     meta?.accountName     ?? parsedAccountId,
+                  roleName:        meta?.roleName        ?? parsedRoleName,
+                  startUrl:        meta?.startUrl        ?? '',
+                  ssoRegion:       meta?.ssoRegion       ?? ds.region ?? 'us-east-1',
+                  region:          ds.region             ?? meta?.region ?? 'us-east-1',
+                  accessKeyId:     ds.accessKeyId,
+                  secretAccessKey: ds.secretAccessKey,
+                  sessionToken:    ds.sessionToken,
+                  expiresAt,
+                  profileName:     ds.profileName,
+                  method:          meta?.method          ?? 'sso' as const,
+                  environment:     meta?.environment     ?? 'unknown' as const,
+                  isFavorite:      meta?.isFavorite      ?? false,
+                  isDefault:       ds.isDefault,
+                  clusters:        meta?.clusters        ?? [],
+                } satisfies Session
+              })
+
+            if (restored.length > 0) {
+              if (counter > sessionIdCounter) sessionIdCounter = counter
+              setSessions(restored)
+            }
+          } else {
+            // Fallback: try localStorage meta + readProfileCredentials (old behavior)
+            const raw = localStorage.getItem('cloudorbit.sessionMeta')
+            if (raw) {
+              const meta: SessionMeta[] = JSON.parse(raw)
+              const now = Date.now()
+              const valid = meta.filter(m => new Date(m.expiresAt).getTime() > now)
+              if (valid.length > 0) {
+                const results = await Promise.all(
+                  valid.map(async m => {
+                    try {
+                      const creds = await api.readProfileCredentials(m.profileName)
+                      return { ...m, ...creds, isDefault: m.isDefault ?? false } as Session
+                    } catch {
+                      return null
+                    }
+                  })
+                )
+                const restored = results.filter((s): s is Session => s !== null)
+                if (restored.length > 0) {
+                  const maxId = Math.max(...restored.map(s => parseInt(s.id) || 0))
+                  if (maxId >= sessionIdCounter) sessionIdCounter = maxId
+                  setSessions(restored)
+                }
               }
             }
           }
-        } catch { /* ignore corrupt metadata */ }
+        } catch { /* ignore restore errors */ }
       } catch (err) {
         // Not in Tauri or error — fall back to mock data
         console.warn('parse_config failed, using mock data:', err)

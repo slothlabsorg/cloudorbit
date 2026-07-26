@@ -59,8 +59,10 @@ pub async fn assume_role(
         .map(|dt| dt.to_rfc3339());
 
     let profile_name = format!("{}-{}", account_id, role_name);
-    write_credentials(&profile_name, &key_id, &secret, &token, &region)
-        .map_err(|e| e.to_string())?;
+    write_credentials_with_expiry(
+        &profile_name, &key_id, &secret, &token, &region,
+        expires_at.as_deref(),
+    ).map_err(|e| e.to_string())?;
 
     Ok(Credentials {
         profile_name,
@@ -79,6 +81,17 @@ fn write_credentials(
     secret: &str,
     token: &str,
     region: &str,
+) -> Result<(), std::io::Error> {
+    write_credentials_with_expiry(profile_name, key_id, secret, token, region, None)
+}
+
+fn write_credentials_with_expiry(
+    profile_name: &str,
+    key_id: &str,
+    secret: &str,
+    token: &str,
+    region: &str,
+    expires_at: Option<&str>,
 ) -> Result<(), std::io::Error> {
     let cred_path = home_dir().unwrap().join(".aws").join("credentials");
     let content   = fs::read_to_string(&cred_path).unwrap_or_default();
@@ -100,12 +113,17 @@ fn write_credentials(
         }
     }
 
-    let block = vec![
+    let mut block = vec![
         format!("aws_access_key_id = {}", key_id),
         format!("aws_secret_access_key = {}", secret),
         format!("aws_session_token = {}", token),
         format!("region = {}", region),
     ];
+    // Store expiry as a comment so CloudOrbit can restore sessions on restart
+    // without relying on localStorage. Ignored by all other AWS tooling.
+    if let Some(exp) = expires_at {
+        block.push(format!("# cloudorbit-expires-at = {}", exp));
+    }
 
     // Write only the named profile — the user explicitly controls [default]
     // via set_default_session. Auto-overwriting [default] on every session
@@ -454,6 +472,138 @@ pub async fn assume_role_federated(
         account_id,
         role_name: role_arn.split('/').last().unwrap_or("").to_string(),
     })
+}
+
+// ── List active credential sessions ─────────────────────────────────────────
+
+/// Read all named profiles from ~/.aws/credentials that:
+///  1. Have a session token (STS temporary credentials)
+///  2. Have a cloudorbit-expires-at comment that is still in the future
+///
+/// Returns a list of active sessions CloudOrbit can restore on startup
+/// without relying on localStorage. Named "default" is excluded because it
+/// is a copy of another profile — we restore the original instead.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialSession {
+    pub profile_name: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    pub session_token: String,
+    pub region: Option<String>,
+    pub expires_at: Option<String>,
+    pub is_default: bool,
+}
+
+#[tauri::command]
+pub fn list_credential_sessions() -> Vec<CredentialSession> {
+    let cred_path = match home_dir() {
+        Some(h) => h.join(".aws").join("credentials"),
+        None => return vec![],
+    };
+    let content = match fs::read_to_string(&cred_path) {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Parse all sections
+    let mut sessions: Vec<CredentialSession> = Vec::new();
+    let mut cur_name: Option<String> = None;
+    let mut key_id: Option<String> = None;
+    let mut secret: Option<String> = None;
+    let mut token: Option<String> = None;
+    let mut region: Option<String> = None;
+    let mut expires_at: Option<String> = None;
+
+    let flush = |cur_name: &Option<String>, key_id: &Option<String>, secret: &Option<String>,
+                 token: &Option<String>, region: &Option<String>, expires_at: &Option<String>,
+                 sessions: &mut Vec<CredentialSession>, now_secs: u64| {
+        let name = match cur_name { Some(n) => n.clone(), None => return };
+        let (k, s, t) = match (key_id, secret, token) {
+            (Some(k), Some(s), Some(t)) => (k.clone(), s.clone(), t.clone()),
+            _ => return,
+        };
+        // Only include STS sessions (have a session token)
+        if t.is_empty() { return }
+        // Skip [default] — it mirrors another profile
+        if name == "default" { return }
+        // Only include sessions whose expires_at is in the future
+        // If no expires_at comment, include anyway (might be valid)
+        let still_valid = match expires_at {
+            Some(exp) => {
+                // Parse ISO 8601 manually — avoid heavy chrono parse in hot path
+                // Just check if the timestamp secs (from a basic parse) > now
+                chrono::DateTime::parse_from_rfc3339(exp)
+                    .map(|dt| dt.timestamp() as u64 > now_secs)
+                    .unwrap_or(true)  // if unparseable, include
+            }
+            None => true,
+        };
+        if !still_valid { return }
+        sessions.push(CredentialSession {
+            profile_name: name,
+            access_key_id: k,
+            secret_access_key: s,
+            session_token: t,
+            region: region.clone(),
+            expires_at: expires_at.clone(),
+            is_default: false,
+        });
+    };
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            flush(&cur_name, &key_id, &secret, &token, &region, &expires_at, &mut sessions, now_secs);
+            cur_name = Some(trimmed[1..trimmed.len()-1].to_string());
+            key_id = None; secret = None; token = None; region = None; expires_at = None;
+        } else if cur_name.is_some() {
+            if let Some((k, v)) = trimmed.split_once('=') {
+                match k.trim() {
+                    "aws_access_key_id"     => key_id = Some(v.trim().to_string()),
+                    "aws_secret_access_key" => secret  = Some(v.trim().to_string()),
+                    "aws_session_token"     => token   = Some(v.trim().to_string()),
+                    "region"                => region  = Some(v.trim().to_string()),
+                    "# cloudorbit-expires-at" => expires_at = Some(v.trim().to_string()),
+                    _ => {}
+                }
+            }
+        }
+    }
+    flush(&cur_name, &key_id, &secret, &token, &region, &expires_at, &mut sessions, now_secs);
+
+    // Mark the one that matches [default]
+    // Check if any profile's access key matches the default profile's key
+    let default_key = {
+        let mut dk: Option<String> = None;
+        let mut in_default = false;
+        for line in content.lines() {
+            let t = line.trim();
+            if t == "[default]" { in_default = true; continue }
+            if in_default && t.starts_with('[') { break }
+            if in_default {
+                if let Some((k, v)) = t.split_once('=') {
+                    if k.trim() == "aws_access_key_id" { dk = Some(v.trim().to_string()); break }
+                }
+            }
+        }
+        dk
+    };
+    if let Some(dk) = default_key {
+        for s in &mut sessions {
+            if s.access_key_id == dk {
+                s.is_default = true;
+                break;
+            }
+        }
+    }
+
+    sessions
 }
 
 // ── Set / pin a session as [default] ─────────────────────────────────────────

@@ -122,6 +122,7 @@ fn main() {
             commands::credentials::assume_role_federated,
             commands::credentials::read_profile_credentials,
             commands::credentials::write_sso_config,
+            commands::credentials::set_default_session,
             commands::credentials::clear_session_credentials,
             // EKS
             commands::eks::list_eks_clusters,

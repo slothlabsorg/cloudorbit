@@ -296,7 +296,7 @@ export default function App() {
                 valid.map(async m => {
                   try {
                     const creds = await api.readProfileCredentials(m.profileName)
-                    return { ...m, ...creds } as Session
+                    return { ...m, ...creds, isDefault: m.isDefault ?? false } as Session
                   } catch {
                     return null
                   }
@@ -515,6 +515,7 @@ export default function App() {
       method: 'sso',
       environment: resolveEnv(envOverrides, profile.startUrl, profile.accountId, profile.name),
       isFavorite: false,
+      isDefault: false,
       clusters: [],
     }
 
@@ -570,6 +571,33 @@ export default function App() {
       method: session.method,
     })
   }, [addActivity, selectedSession])
+
+  // Pin a session as [default] — writes its credentials to [default] in
+  // ~/.aws/credentials so any AWS SDK call without --profile picks it up.
+  // Toggling the same session off clears [default] from the file.
+  const handleSetDefault = useCallback(async (session: Session) => {
+    const willBeDefault = !session.isDefault
+    try {
+      if (willBeDefault) {
+        await api.setDefaultSession(
+          session.accessKeyId,
+          session.secretAccessKey,
+          session.sessionToken,
+          session.region,
+        )
+      } else {
+        // Clear [default] from the credentials file
+        await api.clearSessionCredentials('default', session.accessKeyId)
+      }
+    } catch (err) {
+      console.warn('setDefaultSession error:', err)
+    }
+    // Only one session can be default — clear others, toggle this one
+    setSessions(prev => prev.map(s => ({
+      ...s,
+      isDefault: s.id === session.id ? willBeDefault : false,
+    })))
+  }, [])
 
   // Open AWS console
   const handleOpenConsole = useCallback(async (session: Session) => {
@@ -705,6 +733,7 @@ export default function App() {
             onStartSession={handleStartSession}
             onRenewSession={handleRenewSession}
             onStopSession={handleStopSession}
+            onSetDefault={handleSetDefault}
             onOpenConsole={handleOpenConsole}
             onDetectClusters={handleDetectClusters}
             onActivateCluster={handleActivateCluster}
@@ -749,6 +778,7 @@ export default function App() {
             onOpenConsole={handleOpenConsole}
             onRenewSession={handleRenewSession}
             onStopSession={handleStopSession}
+            onSetDefault={handleSetDefault}
           />
         )
       case 'clusters':

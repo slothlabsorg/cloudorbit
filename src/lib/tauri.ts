@@ -119,6 +119,9 @@ export const api = {
   clearSessionCredentials: (profileName: string, accessKeyId: string) =>
     invoke<void>('clear_session_credentials', { profileName, accessKeyId }),
 
+  setDefaultSession: (accessKeyId: string, secretAccessKey: string, sessionToken: string, region: string) =>
+    invoke<void>('set_default_session', { accessKeyId, secretAccessKey, sessionToken, region }),
+
   writeSsoConfig: (startUrl: string, ssoRegion: string, accounts: AccountInfo[]) =>
     invoke<{ sessionName: string; profileCount: number }>('write_sso_config', {
       startUrl, ssoRegion,

@@ -99,9 +99,10 @@ interface SessionsProps {
   onOpenConsole: (session: Session) => void
   onRenewSession: (session: Session) => void
   onStopSession: (session: Session) => void
+  onSetDefault: (session: Session) => void
 }
 
-export function Sessions({ sessions, isLoading, selectedSession, onSelectSession, onOpenConsole, onRenewSession, onStopSession }: SessionsProps) {
+export function Sessions({ sessions, isLoading, selectedSession, onSelectSession, onOpenConsole, onRenewSession, onStopSession, onSetDefault }: SessionsProps) {
   const [tab, setTab] = useState<TabType>('all')
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -254,6 +255,7 @@ export function Sessions({ sessions, isLoading, selectedSession, onSelectSession
                   onConsole={onOpenConsole}
                   onRenew={onRenewSession}
                   onStop={onStopSession}
+                  onSetDefault={onSetDefault}
                   onToggleCheck={() => toggleSelect(session.id)}
                 />
               ))}
@@ -315,7 +317,7 @@ export function Sessions({ sessions, isLoading, selectedSession, onSelectSession
   )
 }
 
-function SessionRow({ session: s, index, isSelected, isChecked, gridTemplate, onSelect, onConsole, onRenew, onStop, onToggleCheck }: {
+function SessionRow({ session: s, index, isSelected, isChecked, gridTemplate, onSelect, onConsole, onRenew, onStop, onSetDefault, onToggleCheck }: {
   session: Session
   index: number
   isSelected: boolean
@@ -325,6 +327,7 @@ function SessionRow({ session: s, index, isSelected, isChecked, gridTemplate, on
   onConsole: (s: Session) => void
   onRenew: (s: Session) => void
   onStop: (s: Session) => void
+  onSetDefault: (s: Session) => void
   onToggleCheck: () => void
 }) {
   const [hovered, setHovered] = useState(false)
@@ -385,8 +388,21 @@ function SessionRow({ session: s, index, isSelected, isChecked, gridTemplate, on
       </div>
       <div className="flex items-center gap-1">
         <StatusChip status={sessionStatus} />
-        {hovered && (
+        {(hovered || s.isDefault) && (
           <div className="flex items-center gap-0.5 ml-auto">
+            <button
+              onClick={e => { e.stopPropagation(); onSetDefault(s) }}
+              className={`p-1 rounded transition-colors ${
+                s.isDefault
+                  ? 'text-primary bg-primary/10'
+                  : 'text-text-muted hover:text-primary hover:bg-primary/10'
+              }`}
+              title={s.isDefault ? 'Default profile — click to unpin' : 'Set as [default] profile'}
+            >
+              <svg className="w-3 h-3" viewBox="0 0 24 24" fill={s.isDefault ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
+                <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/>
+              </svg>
+            </button>
             <button
               onClick={e => { e.stopPropagation(); onConsole(s) }}
               className="p-1 rounded text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"

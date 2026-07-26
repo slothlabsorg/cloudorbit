@@ -22,6 +22,7 @@ const makeSession = (overrides: Partial<Session> = {}): Session => ({
   method: 'sso',
   environment: 'dev',
   isFavorite: false,
+  isDefault: false,
   clusters: [],
   ...overrides,
 })

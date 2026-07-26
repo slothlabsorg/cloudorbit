@@ -50,6 +50,9 @@ export interface Session {
   method: MethodType
   environment: EnvType
   isFavorite: boolean
+  /** True when this session's credentials are written to the [default] profile
+   *  in ~/.aws/credentials. Only one session can be default at a time. */
+  isDefault: boolean
   clusters?: ClusterInfo[]
 }
 export interface ClusterInfo {

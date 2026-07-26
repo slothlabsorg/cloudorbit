@@ -26,6 +26,7 @@ interface OrbitProps {
   onStartSession: (profile: Profile) => Promise<void>
   onRenewSession: (session: Session) => Promise<void>
   onStopSession: (session: Session) => Promise<void>
+  onSetDefault: (session: Session) => Promise<void>
   onOpenConsole: (session: Session) => Promise<void>
   onDetectClusters?: (session: Session) => Promise<void>
   onActivateCluster?: (cluster: ClusterInfo, session: Session) => Promise<void>
@@ -136,7 +137,7 @@ interface RoleCardInput {
 
 function RoleCard({
   input, isStarting, isRenewing, isDetecting,
-  onStart, onRenew, onStop, onConsole, onCopyCreds, onDetect, onSelect, onToggleFavorite,
+  onStart, onRenew, onStop, onSetDefault, onConsole, onCopyCreds, onDetect, onSelect, onToggleFavorite,
 }: {
   input: RoleCardInput
   isStarting: boolean
@@ -145,6 +146,7 @@ function RoleCard({
   onStart: () => void
   onRenew: () => void
   onStop: () => void
+  onSetDefault: () => void
   onConsole: () => void
   onCopyCreds: () => void
   onDetect: () => void
@@ -179,12 +181,32 @@ function RoleCard({
       <div className="flex items-start gap-2 px-4 pt-3">
         <EnvBadge env={env} />
         <div className="flex-1 min-w-0">
-          <p className="text-text-primary text-sm font-semibold truncate">{accountName}</p>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <p className="text-text-primary text-sm font-semibold truncate">{accountName}</p>
+            {session?.isDefault && (
+              <span className="flex-shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30 uppercase tracking-wider">
+                default
+              </span>
+            )}
+          </div>
           <p className="text-text-muted text-[11px] font-mono truncate">{profile.roleName}</p>
         </div>
+        {active && (
+          <button
+            onClick={e => { e.stopPropagation(); onSetDefault() }}
+            className={`rounded p-0.5 transition-colors flex-shrink-0 ${
+              session?.isDefault ? 'text-primary' : 'text-text-muted hover:text-primary'
+            }`}
+            title={session?.isDefault ? 'Unpin as [default] profile' : 'Pin as [default] AWS profile'}
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill={session?.isDefault ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
+              <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/>
+            </svg>
+          </button>
+        )}
         <button
           onClick={e => { e.stopPropagation(); onToggleFavorite() }}
-          className={`rounded p-0.5 transition-colors ${favorite ? 'text-warning' : 'text-text-muted hover:text-warning'}`}
+          className={`rounded p-0.5 transition-colors flex-shrink-0 ${favorite ? 'text-warning' : 'text-text-muted hover:text-warning'}`}
           title={favorite ? 'Remove from favorites' : 'Add to favorites'}
         >
           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill={favorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
@@ -347,7 +369,7 @@ type Tab = 'active' | 'favorites' | 'recent'
 export function Orbit({
   sessions, ssoGroups, isLoading, selectedSession, activity,
   favorites, envOverrides,
-  onSelectSession, onStartSession, onRenewSession, onStopSession, onOpenConsole,
+  onSelectSession, onStartSession, onRenewSession, onStopSession, onSetDefault, onOpenConsole,
   onDetectClusters, onToggleFavorite, onAddConnection, onNavigate,
   updateInfo, onUpdateClick, onDismissUpdate,
 }: OrbitProps) {
@@ -472,6 +494,10 @@ export function Orbit({
     try { await onStopSession(session) }
     catch (e) { setActionError(String(e)) }
     finally { setStopping(null) }
+  }
+  const handleDefault = async (session: Session) => {
+    try { await onSetDefault(session) }
+    catch (e) { setActionError(String(e)) }
   }
   const handleConsole = async (session: Session) => {
     try { await onOpenConsole(session) } catch (e) { setActionError(String(e)) }
@@ -658,6 +684,7 @@ export function Orbit({
                     onStart={() => handleStart(card.profile)}
                     onRenew={() => card.session && handleRenew(card.session)}
                     onStop={() => card.session && handleStop(card.session)}
+                    onSetDefault={() => card.session && handleDefault(card.session)}
                     onConsole={() => card.session && handleConsole(card.session)}
                     onCopyCreds={() => card.session && handleCopyCreds(card.session)}
                     onDetect={() => card.session && handleDetect(card.session)}

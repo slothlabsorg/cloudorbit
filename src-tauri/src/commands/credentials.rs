@@ -107,7 +107,10 @@ fn write_credentials(
         format!("region = {}", region),
     ];
 
-    for name in &["default", profile_name] {
+    // Write only the named profile — the user explicitly controls [default]
+    // via set_default_session. Auto-overwriting [default] on every session
+    // start would silently break any profile the user pinned as default.
+    for name in &[profile_name] {
         if !sections.contains_key(*name) {
             order.push(name.to_string());
         }
@@ -451,6 +454,68 @@ pub async fn assume_role_federated(
         account_id,
         role_name: role_arn.split('/').last().unwrap_or("").to_string(),
     })
+}
+
+// ── Set / pin a session as [default] ─────────────────────────────────────────
+
+/// Write the credentials of the given session to the `[default]` profile in
+/// ~/.aws/credentials, replacing whatever was there before.
+///
+/// This is the user-controlled "pin as default" action — it makes the session
+/// visible to any AWS SDK / CLI call that doesn't specify a profile.
+/// Only one session can be default at a time.
+#[tauri::command]
+pub fn set_default_session(
+    access_key_id: String,
+    secret_access_key: String,
+    session_token: String,
+    region: String,
+) -> Result<(), String> {
+    let cred_path = home_dir()
+        .ok_or("No home dir")?
+        .join(".aws")
+        .join("credentials");
+
+    let content = fs::read_to_string(&cred_path).unwrap_or_default();
+
+    let mut sections: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut cur = String::new();
+
+    for line in content.lines() {
+        if line.starts_with('[') && line.ends_with(']') {
+            cur = line[1..line.len() - 1].to_string();
+            if !sections.contains_key(&cur) {
+                order.push(cur.clone());
+                sections.insert(cur.clone(), Vec::new());
+            }
+        } else if !cur.is_empty() {
+            sections.get_mut(&cur).unwrap().push(line.to_string());
+        }
+    }
+
+    let block = vec![
+        format!("aws_access_key_id = {}", access_key_id),
+        format!("aws_secret_access_key = {}", secret_access_key),
+        format!("aws_session_token = {}", session_token),
+        format!("region = {}", region),
+    ];
+
+    if !sections.contains_key("default") {
+        order.insert(0, "default".to_string()); // keep default first in file
+    }
+    sections.insert("default".to_string(), block);
+
+    let mut out = String::new();
+    for name in &order {
+        if let Some(lines) = sections.get(name) {
+            out.push_str(&format!("[{}]\n{}\n\n", name, lines.join("\n")));
+        }
+    }
+
+    fs::create_dir_all(cred_path.parent().unwrap()).map_err(|e| e.to_string())?;
+    fs::write(&cred_path, out.trim_end().to_string() + "\n").map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ── Stop / clear session credentials ─────────────────────────────────────────

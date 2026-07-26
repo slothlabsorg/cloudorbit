@@ -1,5 +1,4 @@
 import type { NewsFeed, NewsItem } from '@/types/news'
-import { MOCK_FEED } from '@/data/news-mock'
 
 const APP_ID      = 'cloudorbit'
 const FEED_URL    = 'https://slothlabs.org/news/feed.json'
@@ -11,24 +10,18 @@ const READ_KEY    = 'cloudorbit.newsRead' // set of ids the user has seen
 
 /**
  * Load news items for this app.
- * Returns cached data immediately when fresh; falls back to mock on network error.
- * Does NOT throw — callers always get an array (possibly empty).
+ * Returns cached data immediately when fresh; throws on network error so the
+ * caller can show an error state with a retry button.
  */
 export async function loadNews(): Promise<NewsItem[]> {
   const cached = readCache()
   if (cached) return cached
 
-  try {
-    const res = await fetch(`${FEED_URL}?app=${APP_ID}&v=1`, { signal: AbortSignal.timeout(8000) })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const feed: NewsFeed = await res.json()
-    writeCache(feed)
-    return filterItems(feed.items)
-  } catch {
-    // Network unavailable or fetch blocked — surface mock data so the tab
-    // is never empty. In production, real feed items replace these.
-    return filterItems(MOCK_FEED.items)
-  }
+  const res = await fetch(`${FEED_URL}?app=${APP_ID}&v=1`, { signal: AbortSignal.timeout(8000) })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const feed: NewsFeed = await res.json()
+  writeCache(feed)
+  return filterItems(feed.items)
 }
 
 /** Force-refetch ignoring the cache (e.g. pull-to-refresh). */

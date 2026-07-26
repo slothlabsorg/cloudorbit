@@ -29,6 +29,9 @@ interface AccountsProps {
   customTags: Record<string, CustomTag>
   onSetCustomTag: (startUrl: string, accountId: string, tag: CustomTag | null) => void
   onRenameSso?: (startUrl: string, alias: string) => void
+  /** Per-account display aliases, keyed by `${startUrl}|${accountId}`. */
+  accountAliases?: Record<string, string>
+  onRenameAccount?: (startUrl: string, accountId: string, alias: string) => void
 }
 
 function favoriteKey(startUrl: string, accountId: string, roleName: string): string {
@@ -56,6 +59,7 @@ export function Accounts({
   onSelectSession, onStartSession, onAddConnection, onDetectClusters,
   favorites, onToggleFavorite, envOverrides, onSetEnvOverride,
   customTags, onSetCustomTag, onRenameSso,
+  accountAliases = {}, onRenameAccount,
 }: AccountsProps) {
   const [filter, setFilter] = useState<FilterType>('all')
   const [search, setSearch] = useState('')
@@ -72,9 +76,10 @@ export function Accounts({
     for (const s of sessions) {
       const key = `${s.accountId}-${s.roleName}`
       usedKeys.add(key)
+      const aliasKey = `${s.startUrl}|${s.accountId}`
       rows.push({
         key,
-        name: s.accountName,  // already the clean account name
+        name: accountAliases[aliasKey] ?? s.accountName,
         accountId: s.accountId,
         roleName: s.roleName,
         region: s.region,
@@ -95,15 +100,13 @@ export function Accounts({
         const key = `${p.accountId}-${p.roleName}`
         if (usedKeys.has(key)) continue
         usedKeys.add(key)
-        // Accordion header wants the raw account name, not the combined
-        // "account / role" display string. Fall back to stripping the
-        // delimiter for legacy profiles that don't have accountName set.
         const cleanAccountName = p.accountName
           ?? p.name.split(' / ')[0]
           ?? p.name
+        const aliasKey = `${group.startUrl}|${p.accountId}`
         rows.push({
           key,
-          name: cleanAccountName,
+          name: accountAliases[aliasKey] ?? cleanAccountName,
           accountId: p.accountId,
           roleName: p.roleName,
           region: p.region,
@@ -116,7 +119,7 @@ export function Accounts({
     }
 
     return rows
-  }, [sessions, ssoGroups])
+  }, [sessions, ssoGroups, accountAliases])
 
   const filtered = useMemo(() => {
     return allRows.filter(row => {
@@ -307,6 +310,8 @@ export function Accounts({
                   onStart={handleStart}
                   onRename={onRenameSso ? (alias: string) => onRenameSso(sso.startUrl, alias) : undefined}
                   currentAlias={ssoGroups.find(g => g.startUrl === sso.startUrl)?.alias ?? ''}
+                  accountAliases={accountAliases}
+                  onRenameAccount={onRenameAccount}
                 />
               ))}
               {grouped.orphan.length > 0 && (
@@ -363,9 +368,11 @@ interface SsoSectionProps {
   onStart: (row: AccountRow) => void
   onRename?: (alias: string) => void
   currentAlias?: string
+  accountAliases?: Record<string, string>
+  onRenameAccount?: (startUrl: string, accountId: string, alias: string) => void
 }
 
-function SsoSection({ sso, selectedAccountKey, startingKey, favorites, onToggleFavorite, envOverrides, onSetEnvOverride, customTags, onSetCustomTag, onRowClick, onStart, onRename, currentAlias }: SsoSectionProps) {
+function SsoSection({ sso, selectedAccountKey, startingKey, favorites, onToggleFavorite, envOverrides, onSetEnvOverride, customTags, onSetCustomTag, onRowClick, onStart, onRename, currentAlias, accountAliases = {}, onRenameAccount }: SsoSectionProps) {
   const [collapsed, setCollapsed] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(currentAlias ?? '')
@@ -447,6 +454,8 @@ function SsoSection({ sso, selectedAccountKey, startingKey, favorites, onToggleF
               onSetCustomTag={onSetCustomTag}
               onRowClick={onRowClick}
               onStart={onStart}
+              accountAliases={accountAliases}
+              onRenameAccount={onRenameAccount}
             />
           ))}
         </div>
@@ -458,6 +467,7 @@ function SsoSection({ sso, selectedAccountKey, startingKey, favorites, onToggleF
 function AccountAccordion({
   sso, account, selectedAccountKey, startingKey, favorites, onToggleFavorite,
   envOverrides, onSetEnvOverride, customTags, onSetCustomTag, onRowClick, onStart,
+  accountAliases = {}, onRenameAccount,
 }: {
   sso: { startUrl: string; label: string }
   account: { accountId: string; accountName: string; rows: AccountRow[] }
@@ -471,6 +481,8 @@ function AccountAccordion({
   onSetCustomTag: (startUrl: string, accountId: string, tag: CustomTag | null) => void
   onRowClick: (row: AccountRow) => void
   onStart: (row: AccountRow) => void
+  accountAliases?: Record<string, string>
+  onRenameAccount?: (startUrl: string, accountId: string, alias: string) => void
 }) {
   // Default-expanded when a row inside is selected, the account has a live
   // session, or any of its roles is favorited — those are the cases the user
@@ -483,6 +495,11 @@ function AccountAccordion({
     if (selectedAccountKey && account.rows.some(r => r.key === selectedAccountKey)) return true
     return anyFav
   })
+  // Re-open the accordion reactively when a role inside becomes a favorite,
+  // so switching to the Favorites tab reveals the account without extra clicks.
+  useEffect(() => {
+    if (anyFav) setOpen(true)
+  }, [anyFav])
   const activeCount = account.rows.filter(r => r.session && new Date(r.session.expiresAt).getTime() > Date.now()).length
   // Account-level env — override first, then fall back to the auto-detected
   // value from the account name. The dot on the badge signals overridden.
@@ -490,6 +507,20 @@ function AccountAccordion({
   const customTag = customTags[overrideKey]
   const env = envOverrides[overrideKey] ?? detectEnv(account.accountName)
   const overridden = !!customTag || overrideKey in envOverrides
+
+  // Account rename / alias state
+  const accountAliasKey = `${sso.startUrl}|${account.accountId}`
+  const currentAccountAlias = accountAliases[accountAliasKey] ?? ''
+  const displayName = currentAccountAlias || account.accountName
+  const [renamingAccount, setRenamingAccount] = useState(false)
+  const [accountDraft, setAccountDraft] = useState(currentAccountAlias)
+  useEffect(() => {
+    if (!renamingAccount) setAccountDraft(currentAccountAlias)
+  }, [currentAccountAlias, renamingAccount])
+  const commitAccountRename = () => {
+    if (onRenameAccount) onRenameAccount(sso.startUrl, account.accountId, accountDraft)
+    setRenamingAccount(false)
+  }
 
   // Favorites first within the account.
   const sortedRows = [...account.rows].sort((a, b) => {
@@ -504,8 +535,8 @@ function AccountAccordion({
   return (
     <div className="mb-1 rounded-lg overflow-hidden border border-border-subtle">
       <div
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-2 px-3 py-2 bg-bg-surface hover:bg-bg-surface2 transition-colors text-left cursor-pointer"
+        onClick={e => !renamingAccount && setOpen(o => !o)}
+        className="w-full group flex items-center gap-2 px-3 py-2 bg-bg-surface hover:bg-bg-surface2 transition-colors text-left cursor-pointer"
       >
         <svg className={`w-3 h-3 text-text-muted flex-shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
           <polyline points="9 6 15 12 9 18"/>
@@ -515,8 +546,6 @@ function AccountAccordion({
           custom={customTag}
           overridden={overridden}
           onChange={next => {
-            // Selecting a canonical env clears any custom tag so the two
-            // override channels can't fight each other.
             onSetCustomTag(sso.startUrl, account.accountId, null)
             onSetEnvOverride(sso.startUrl, account.accountId, next)
           }}
@@ -529,7 +558,48 @@ function AccountAccordion({
             onSetEnvOverride(sso.startUrl, account.accountId, null)
           }}
         />
-        <span className="text-sm font-medium text-text-primary truncate flex-1 min-w-0">{account.accountName}</span>
+        {renamingAccount ? (
+          <div className="flex items-center gap-1 flex-1 min-w-0" onClick={e => e.stopPropagation()}>
+            <input
+              autoFocus
+              type="text"
+              value={accountDraft}
+              placeholder={account.accountName}
+              onChange={e => setAccountDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') commitAccountRename()
+                if (e.key === 'Escape') { setAccountDraft(currentAccountAlias); setRenamingAccount(false) }
+              }}
+              className="text-[11px] bg-bg-surface border border-primary/50 rounded px-2 py-0.5 outline-none focus:border-primary flex-1 min-w-0 max-w-[160px]"
+            />
+            <button onClick={commitAccountRename} className="text-[10px] text-primary hover:text-primary/80 px-1 flex-shrink-0" title="Save">✓</button>
+            <button
+              onClick={() => { setAccountDraft(currentAccountAlias); setRenamingAccount(false) }}
+              className="text-[10px] text-text-muted hover:text-text-primary px-1 flex-shrink-0"
+              title="Cancel"
+            >✕</button>
+          </div>
+        ) : (
+          <span className="flex items-center gap-1 flex-1 min-w-0" title={currentAccountAlias ? account.accountName : undefined}>
+              <span className="text-sm font-medium text-text-primary truncate">
+                {displayName}
+                {currentAccountAlias && (
+                  <span className="ml-1.5 text-[10px] text-text-muted font-normal font-mono">({account.accountName})</span>
+                )}
+              </span>
+              {onRenameAccount && (
+                <button
+                  onClick={e => { e.stopPropagation(); setRenamingAccount(true) }}
+                  className="flex-shrink-0 text-text-muted hover:text-primary transition-colors p-0.5 rounded opacity-40 hover:opacity-100"
+                  title="Rename account"
+                >
+                  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                  </svg>
+                </button>
+              )}
+            </span>
+        )}
         <span className="text-[10px] text-text-muted font-mono flex-shrink-0">{maskId(account.accountId)}</span>
         <span className="text-[10px] text-text-muted flex-shrink-0">
           {account.rows.length} role{account.rows.length !== 1 ? 's' : ''}

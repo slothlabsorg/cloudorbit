@@ -46,6 +46,20 @@ function writeAliases(aliases: Record<string, string>) {
   try { localStorage.setItem(ALIAS_STORAGE_KEY, JSON.stringify(aliases)) } catch { /* quota */ }
 }
 
+// ── Account aliases — persisted mapping of `${startUrl}|${accountId}` → alias
+// Lets users give a friendly name to any individual account, overriding the
+// AWS account name (e.g. "AWS_Dev_DevNextDeveloper-xxxxx" → "My Dev").
+const ACCOUNT_ALIAS_KEY = 'cloudorbit.accountAliases'
+function readAccountAliases(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(ACCOUNT_ALIAS_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch { return {} }
+}
+function writeAccountAliases(aliases: Record<string, string>) {
+  try { localStorage.setItem(ACCOUNT_ALIAS_KEY, JSON.stringify(aliases)) } catch { /* quota */ }
+}
+
 // Read URL params for dev/preview mode
 function getUrlParam(key: string): string | null {
   try { return new URL(window.location.href).searchParams.get(key) } catch { return null }
@@ -615,6 +629,22 @@ export default function App() {
     writeAliases(aliases)
   }, [])
 
+  // Per-account display aliases — lets users rename individual accounts
+  // (e.g. "AWS_Dev_DevNextDeveloper-xxxxx" → "My Dev"). Keyed by
+  // `${startUrl}|${accountId}`, persisted in localStorage.
+  const [accountAliases, setAccountAliases] = useState<Record<string, string>>(readAccountAliases)
+  const handleRenameAccount = useCallback((startUrl: string, accountId: string, alias: string) => {
+    const key = `${startUrl}|${accountId}`
+    const trimmed = alias.trim()
+    setAccountAliases(prev => {
+      const next = { ...prev }
+      if (trimmed) next[key] = trimmed
+      else delete next[key]
+      writeAccountAliases(next)
+      return next
+    })
+  }, [])
+
   // Add a new SSO connection from the wizard
   const handleAddConnection = useCallback((group: SsoGroup) => {
     setSsoGroups(prev => {
@@ -684,6 +714,8 @@ export default function App() {
             customTags={customTags}
             onSetCustomTag={setCustomTag}
             onRenameSso={handleRenameSso}
+            accountAliases={accountAliases}
+            onRenameAccount={handleRenameAccount}
           />
         )
       case 'sessions':

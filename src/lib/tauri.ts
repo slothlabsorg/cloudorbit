@@ -116,6 +116,9 @@ export const api = {
   notify: (title: string, body: string) =>
     invoke<void>('notify', { title, body }),
 
+  clearSessionCredentials: (profileName: string, accessKeyId: string) =>
+    invoke<void>('clear_session_credentials', { profileName, accessKeyId }),
+
   writeSsoConfig: (startUrl: string, ssoRegion: string, accounts: AccountInfo[]) =>
     invoke<{ sessionName: string; profileCount: number }>('write_sso_config', {
       startUrl, ssoRegion,

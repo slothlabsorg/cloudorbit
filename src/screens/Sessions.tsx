@@ -98,9 +98,10 @@ interface SessionsProps {
   onSelectSession: (session: Session) => void
   onOpenConsole: (session: Session) => void
   onRenewSession: (session: Session) => void
+  onStopSession: (session: Session) => void
 }
 
-export function Sessions({ sessions, isLoading, selectedSession, onSelectSession, onOpenConsole, onRenewSession }: SessionsProps) {
+export function Sessions({ sessions, isLoading, selectedSession, onSelectSession, onOpenConsole, onRenewSession, onStopSession }: SessionsProps) {
   const [tab, setTab] = useState<TabType>('all')
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -144,6 +145,11 @@ export function Sessions({ sessions, isLoading, selectedSession, onSelectSession
 
   const handleRenewSelected = () => {
     filtered.filter(s => selectedIds.has(s.id)).forEach(s => onRenewSession(s))
+    setSelectedIds(new Set())
+  }
+
+  const handleStopSelected = () => {
+    filtered.filter(s => selectedIds.has(s.id)).forEach(s => onStopSession(s))
     setSelectedIds(new Set())
   }
 
@@ -247,6 +253,7 @@ export function Sessions({ sessions, isLoading, selectedSession, onSelectSession
                   onSelect={onSelectSession}
                   onConsole={onOpenConsole}
                   onRenew={onRenewSession}
+                  onStop={onStopSession}
                   onToggleCheck={() => toggleSelect(session.id)}
                 />
               ))}
@@ -281,6 +288,16 @@ export function Sessions({ sessions, isLoading, selectedSession, onSelectSession
                 </button>
                 <div className="w-px h-4 bg-border" />
                 <button
+                  onClick={handleStopSelected}
+                  className="flex items-center gap-1.5 text-xs text-text-primary hover:text-danger transition-colors font-medium"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  </svg>
+                  Stop Selected
+                </button>
+                <div className="w-px h-4 bg-border" />
+                <button
                   onClick={() => setSelectedIds(new Set())}
                   className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors"
                 >
@@ -298,7 +315,7 @@ export function Sessions({ sessions, isLoading, selectedSession, onSelectSession
   )
 }
 
-function SessionRow({ session: s, index, isSelected, isChecked, gridTemplate, onSelect, onConsole, onRenew, onToggleCheck }: {
+function SessionRow({ session: s, index, isSelected, isChecked, gridTemplate, onSelect, onConsole, onRenew, onStop, onToggleCheck }: {
   session: Session
   index: number
   isSelected: boolean
@@ -307,6 +324,7 @@ function SessionRow({ session: s, index, isSelected, isChecked, gridTemplate, on
   onSelect: (s: Session) => void
   onConsole: (s: Session) => void
   onRenew: (s: Session) => void
+  onStop: (s: Session) => void
   onToggleCheck: () => void
 }) {
   const [hovered, setHovered] = useState(false)
@@ -387,6 +405,15 @@ function SessionRow({ session: s, index, isSelected, isChecked, gridTemplate, on
               <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <polyline points="23 4 23 10 17 10"/>
                 <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
+              </svg>
+            </button>
+            <button
+              onClick={e => { e.stopPropagation(); onStop(s) }}
+              className="p-1 rounded text-text-muted hover:text-danger hover:bg-danger/10 transition-colors"
+              title="Stop session"
+            >
+              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
               </svg>
             </button>
           </div>

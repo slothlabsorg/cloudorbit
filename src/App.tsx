@@ -551,6 +551,26 @@ export default function App() {
     }
   }, [handleStartSession, addActivity])
 
+  // Stop / clear session — removes credentials from ~/.aws/credentials and
+  // drops the session from local state. AWS STS credentials cannot be revoked
+  // server-side; this makes them invisible to local tooling.
+  const handleStopSession = useCallback(async (session: Session) => {
+    try {
+      await api.clearSessionCredentials(session.profileName, session.accessKeyId)
+    } catch (err) {
+      // Best-effort: clear local state even if the credentials file write fails
+      console.warn('clearSessionCredentials error (continuing):', err)
+    }
+    setSessions(prev => prev.filter(s => s.id !== session.id))
+    if (selectedSession?.id === session.id) setSelectedSession(null)
+    addActivity({
+      type: 'session-expire',
+      title: 'Session stopped',
+      reference: `${session.accountName} / ${session.roleName}`,
+      method: session.method,
+    })
+  }, [addActivity, selectedSession])
+
   // Open AWS console
   const handleOpenConsole = useCallback(async (session: Session) => {
     try {
@@ -684,6 +704,7 @@ export default function App() {
             onSelectSession={setSelectedSession}
             onStartSession={handleStartSession}
             onRenewSession={handleRenewSession}
+            onStopSession={handleStopSession}
             onOpenConsole={handleOpenConsole}
             onDetectClusters={handleDetectClusters}
             onActivateCluster={handleActivateCluster}
@@ -727,6 +748,7 @@ export default function App() {
             onSelectSession={setSelectedSession}
             onOpenConsole={handleOpenConsole}
             onRenewSession={handleRenewSession}
+            onStopSession={handleStopSession}
           />
         )
       case 'clusters':

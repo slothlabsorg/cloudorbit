@@ -25,6 +25,7 @@ interface OrbitProps {
   onSelectSession: (session: Session) => void
   onStartSession: (profile: Profile) => Promise<void>
   onRenewSession: (session: Session) => Promise<void>
+  onStopSession: (session: Session) => Promise<void>
   onOpenConsole: (session: Session) => Promise<void>
   onDetectClusters?: (session: Session) => Promise<void>
   onActivateCluster?: (cluster: ClusterInfo, session: Session) => Promise<void>
@@ -135,7 +136,7 @@ interface RoleCardInput {
 
 function RoleCard({
   input, isStarting, isRenewing, isDetecting,
-  onStart, onRenew, onConsole, onCopyCreds, onDetect, onSelect, onToggleFavorite,
+  onStart, onRenew, onStop, onConsole, onCopyCreds, onDetect, onSelect, onToggleFavorite,
 }: {
   input: RoleCardInput
   isStarting: boolean
@@ -143,6 +144,7 @@ function RoleCard({
   isDetecting: boolean
   onStart: () => void
   onRenew: () => void
+  onStop: () => void
   onConsole: () => void
   onCopyCreds: () => void
   onDetect: () => void
@@ -253,6 +255,14 @@ function RoleCard({
               Renew
             </Button>
             <IconButton
+              onClick={e => { e.stopPropagation(); onStop() }}
+              title="Stop session — clears local credentials"
+            >
+              <svg className="w-3.5 h-3.5 text-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+              </svg>
+            </IconButton>
+            <IconButton
               onClick={e => { e.stopPropagation(); onConsole() }}
               title="Open AWS Console"
             >
@@ -337,13 +347,14 @@ type Tab = 'active' | 'favorites' | 'recent'
 export function Orbit({
   sessions, ssoGroups, isLoading, selectedSession, activity,
   favorites, envOverrides,
-  onSelectSession, onStartSession, onRenewSession, onOpenConsole,
+  onSelectSession, onStartSession, onRenewSession, onStopSession, onOpenConsole,
   onDetectClusters, onToggleFavorite, onAddConnection, onNavigate,
   updateInfo, onUpdateClick, onDismissUpdate,
 }: OrbitProps) {
   const [tab, setTab] = useState<Tab>('active')
   const [starting, setStarting] = useState<string | null>(null)
   const [renewing, setRenewing] = useState<string | null>(null)
+  const [stopping, setStopping] = useState<string | null>(null)
   const [detecting, setDetecting] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -455,6 +466,12 @@ export function Orbit({
     try { await onRenewSession(session) }
     catch (e) { setActionError(String(e)) }
     finally { setRenewing(null) }
+  }
+  const handleStop = async (session: Session) => {
+    setStopping(session.id); setActionError(null)
+    try { await onStopSession(session) }
+    catch (e) { setActionError(String(e)) }
+    finally { setStopping(null) }
   }
   const handleConsole = async (session: Session) => {
     try { await onOpenConsole(session) } catch (e) { setActionError(String(e)) }
@@ -640,6 +657,7 @@ export function Orbit({
                     isDetecting={card.session ? detecting === card.session.id : false}
                     onStart={() => handleStart(card.profile)}
                     onRenew={() => card.session && handleRenew(card.session)}
+                    onStop={() => card.session && handleStop(card.session)}
                     onConsole={() => card.session && handleConsole(card.session)}
                     onCopyCreds={() => card.session && handleCopyCreds(card.session)}
                     onDetect={() => card.session && handleDetect(card.session)}

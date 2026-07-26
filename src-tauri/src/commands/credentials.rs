@@ -453,6 +453,71 @@ pub async fn assume_role_federated(
     })
 }
 
+// ── Stop / clear session credentials ─────────────────────────────────────────
+
+/// Remove a session's credentials from ~/.aws/credentials.
+///
+/// Erases the named profile (and "default" if it matches this session's
+/// access key) so that tools relying on ~/.aws/credentials no longer see
+/// stale tokens after the user explicitly stops a session.
+///
+/// This does NOT revoke the STS credentials in AWS — temporary credentials
+/// cannot be revoked server-side. It simply makes them invisible to the
+/// local toolchain.
+#[tauri::command]
+pub fn clear_session_credentials(
+    profile_name: String,
+    access_key_id: String,
+) -> Result<(), String> {
+    let cred_path = home_dir()
+        .ok_or("No home dir")?
+        .join(".aws")
+        .join("credentials");
+
+    let content = fs::read_to_string(&cred_path).unwrap_or_default();
+
+    // Parse preserving order
+    let mut sections: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut cur = String::new();
+
+    for line in content.lines() {
+        if line.starts_with('[') && line.ends_with(']') {
+            cur = line[1..line.len() - 1].to_string();
+            if !sections.contains_key(&cur) {
+                order.push(cur.clone());
+                sections.insert(cur.clone(), Vec::new());
+            }
+        } else if !cur.is_empty() {
+            sections.get_mut(&cur).unwrap().push(line.to_string());
+        }
+    }
+
+    // Remove the named profile
+    sections.remove(&profile_name);
+    order.retain(|k| k != &profile_name);
+
+    // Also remove "default" if it belongs to this session (same access key)
+    let default_matches = sections.get("default")
+        .map(|lines| lines.iter().any(|l| l.contains(&access_key_id)))
+        .unwrap_or(false);
+    if default_matches {
+        sections.remove("default");
+        order.retain(|k| k != "default");
+    }
+
+    let mut out = String::new();
+    for name in &order {
+        if let Some(lines) = sections.get(name) {
+            out.push_str(&format!("[{}]\n{}\n\n", name, lines.join("\n")));
+        }
+    }
+
+    fs::create_dir_all(cred_path.parent().unwrap()).map_err(|e| e.to_string())?;
+    fs::write(&cred_path, out.trim_end().to_string() + "\n").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ── Unit tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

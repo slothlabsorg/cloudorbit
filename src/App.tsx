@@ -302,9 +302,25 @@ export default function App() {
             const now = Date.now()
             let counter = sessionIdCounter
 
+            // Build a lookup: accountId → { startUrl, ssoRegion, accountName }
+            // from the freshly loaded ssoGroups, so we can fill in missing meta.
+            type SsoInfo = { startUrl: string; ssoRegion: string; accountName: string }
+            const ssoByAccountId = new Map<string, SsoInfo>()
+            for (const g of config.ssoGroups) {
+              for (const p of g.profiles) {
+                if (p.accountId) {
+                  const cleanName = p.accountName ?? p.name.split(' / ')[0] ?? p.name
+                  ssoByAccountId.set(p.accountId, {
+                    startUrl: g.startUrl,
+                    ssoRegion: g.ssoRegion,
+                    accountName: cleanName,
+                  })
+                }
+              }
+            }
+
             const restored: Session[] = diskSessions
               .filter(ds => {
-                // Double-check expiry (backend already filtered, but be safe)
                 if (!ds.expiresAt) return true
                 return new Date(ds.expiresAt).getTime() > now
               })
@@ -320,13 +336,17 @@ export default function App() {
                 const parsedAccountId = dashIdx > 0 ? ds.profileName.slice(0, dashIdx) : ds.profileName
                 const parsedRoleName  = dashIdx > 0 ? ds.profileName.slice(dashIdx + 1) : ''
 
+                const accountId = meta?.accountId ?? parsedAccountId
+                // Recover startUrl and accountName from ssoGroups if meta is missing
+                const ssoInfo = ssoByAccountId.get(accountId)
+
                 return {
                   id,
-                  accountId:       meta?.accountId       ?? parsedAccountId,
-                  accountName:     meta?.accountName     ?? parsedAccountId,
+                  accountId,
+                  accountName:     meta?.accountName     ?? ssoInfo?.accountName ?? parsedAccountId,
                   roleName:        meta?.roleName        ?? parsedRoleName,
-                  startUrl:        meta?.startUrl        ?? '',
-                  ssoRegion:       meta?.ssoRegion       ?? ds.region ?? 'us-east-1',
+                  startUrl:        meta?.startUrl        || ssoInfo?.startUrl    || '',
+                  ssoRegion:       meta?.ssoRegion       ?? ssoInfo?.ssoRegion   ?? ds.region ?? 'us-east-1',
                   region:          ds.region             ?? meta?.region ?? 'us-east-1',
                   accessKeyId:     ds.accessKeyId,
                   secretAccessKey: ds.secretAccessKey,

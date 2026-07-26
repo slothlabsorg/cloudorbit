@@ -4,6 +4,7 @@ export function formatExpiry(isoString: string | null | undefined): { label: str
   if (!isoString) return { label: 'Unknown', status: 'active' }
   const diffMs = new Date(isoString).getTime() - Date.now()
   if (diffMs <= 0) return { label: 'Expired', status: 'expired' }
+  if (diffMs < 60000) return { label: '<1m', status: 'expiring' }
   const diffMin = Math.floor(diffMs / 60000)
   const hours = Math.floor(diffMin / 60)
   const mins = diffMin % 60

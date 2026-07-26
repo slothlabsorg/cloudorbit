@@ -340,12 +340,17 @@ export default function App() {
                 // Recover startUrl and accountName from ssoGroups if meta is missing
                 const ssoInfo = ssoByAccountId.get(accountId)
 
+                const accountName = meta?.accountName ?? ssoInfo?.accountName ?? parsedAccountId
+                // Prefer ssoInfo.startUrl as canonical source (matches alias keys);
+                // fall back to meta only when ssoInfo is unavailable.
+                const startUrl = ssoInfo?.startUrl ?? meta?.startUrl ?? ''
+
                 return {
                   id,
                   accountId,
-                  accountName:     meta?.accountName     ?? ssoInfo?.accountName ?? parsedAccountId,
+                  accountName,
                   roleName:        meta?.roleName        ?? parsedRoleName,
-                  startUrl:        meta?.startUrl        || ssoInfo?.startUrl    || '',
+                  startUrl,
                   ssoRegion:       meta?.ssoRegion       ?? ssoInfo?.ssoRegion   ?? ds.region ?? 'us-east-1',
                   region:          ds.region             ?? meta?.region ?? 'us-east-1',
                   accessKeyId:     ds.accessKeyId,
@@ -354,7 +359,9 @@ export default function App() {
                   expiresAt,
                   profileName:     ds.profileName,
                   method:          meta?.method          ?? 'sso' as const,
-                  environment:     meta?.environment     ?? 'unknown' as const,
+                  environment:     meta?.environment && meta.environment !== 'unknown'
+                                     ? meta.environment
+                                     : detectEnv(accountName),
                   isFavorite:      meta?.isFavorite      ?? false,
                   isDefault:       ds.isDefault,
                   clusters:        meta?.clusters        ?? [],
@@ -377,7 +384,10 @@ export default function App() {
                   valid.map(async m => {
                     try {
                       const creds = await api.readProfileCredentials(m.profileName)
-                      return { ...m, ...creds, isDefault: m.isDefault ?? false } as Session
+                      const env = m.environment && m.environment !== 'unknown'
+                        ? m.environment
+                        : detectEnv(m.accountName)
+                      return { ...m, ...creds, environment: env, isDefault: m.isDefault ?? false } as Session
                     } catch {
                       return null
                     }

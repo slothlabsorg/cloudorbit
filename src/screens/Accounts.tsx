@@ -701,8 +701,7 @@ function RoleRow({ row, isSelected, isStarting, isFavorite, onToggleFavorite, on
         expiryStatus === 'expiring' ? 'text-warning' : 'text-text-muted'
       }`}>{expiryLabel}</span>
       <div className="flex items-center gap-1 w-16 justify-end">
-        <StatusChip status={sessionStatus} />
-        {hovered && !row.session && (
+        {hovered && !row.session ? (
           <Button
             variant="secondary" size="sm" loading={isStarting}
             className="py-0.5 px-1.5 text-[10px]"
@@ -710,8 +709,7 @@ function RoleRow({ row, isSelected, isStarting, isFavorite, onToggleFavorite, on
           >
             Start
           </Button>
-        )}
-        {hovered && row.session && sessionStatus === 'expired' && (
+        ) : hovered && row.session && sessionStatus === 'expired' ? (
           <Button
             variant="secondary" size="sm" loading={isStarting}
             className="py-0.5 px-1.5 text-[10px]"
@@ -719,6 +717,8 @@ function RoleRow({ row, isSelected, isStarting, isFavorite, onToggleFavorite, on
           >
             Renew
           </Button>
+        ) : (
+          <StatusChip status={sessionStatus} />
         )}
       </div>
 

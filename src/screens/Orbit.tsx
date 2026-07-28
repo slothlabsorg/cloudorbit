@@ -5,6 +5,7 @@ import { formatExpiry, detectEnv, envOverrideKey } from '@/lib/time'
 import { EnvBadge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import Button from '@/components/ui/Button'
+import { api } from '@/lib/tauri'
 
 // ── Orbit — Dashboard ────────────────────────────────────────────────────────
 // The home screen. Top-of-fold is a stats band + a live session-timeline
@@ -36,6 +37,8 @@ interface OrbitProps {
   updateInfo?: { version: string; body: string | null } | null
   onUpdateClick?: () => void
   onDismissUpdate?: () => void
+  /** Key → SSO login state for in-flight re-auth flows (key = accountId-roleName) */
+  ssoLoginState?: Record<string, { status: string; verificationUrl?: string; error?: string }>
 }
 
 function favKey(startUrl: string, accountId: string, roleName: string): string {
@@ -138,6 +141,7 @@ interface RoleCardInput {
 function RoleCard({
   input, isStarting, isRenewing, isDetecting,
   onStart, onRenew, onStop, onSetDefault, onConsole, onCopyCreds, onDetect, onSelect, onToggleFavorite,
+  ssoLogin,
 }: {
   input: RoleCardInput
   isStarting: boolean
@@ -152,6 +156,7 @@ function RoleCard({
   onDetect: () => void
   onSelect: () => void
   onToggleFavorite: () => void
+  ssoLogin?: { status: string; verificationUrl?: string; error?: string }
 }) {
   const { profile, accountName, session, env, favorite } = input
   const now = Date.now()
@@ -254,27 +259,73 @@ function RoleCard({
         )}
       </div>
 
+      {/* SSO re-auth banner — shown when browser approval is pending */}
+      {ssoLogin?.status === 'polling' && (
+        <div className="mx-3 mb-2 rounded-lg border border-warning/40 bg-warning/8 px-3 py-2 space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <svg className="w-3 h-3 text-warning flex-shrink-0 animate-pulse" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="12" cy="12" r="10"/>
+            </svg>
+            <span className="text-[11px] font-semibold text-warning">Approve in your browser</span>
+          </div>
+          <p className="text-[10px] text-text-muted leading-relaxed">
+            A browser window should have opened. Approve the login request to continue.
+          </p>
+          {ssoLogin.verificationUrl && (
+            <button
+              onClick={e => { e.stopPropagation(); api.openExternalUrl(ssoLogin.verificationUrl!).catch(() => {}) }}
+              className="text-[10px] text-warning underline hover:text-warning/80 transition-colors"
+            >
+              Open browser again →
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* SSO error banner */}
+      {ssoLogin?.status === 'error' && (
+        <div className="mx-3 mb-2 rounded-lg border border-danger/40 bg-danger/8 px-3 py-2 space-y-1.5">
+          <p className="text-[11px] font-semibold text-danger">Login failed</p>
+          <p className="text-[10px] text-text-muted">{ssoLogin.error ?? 'SSO authentication failed. Try again.'}</p>
+        </div>
+      )}
+
+      {/* Expired banner — only when not in SSO flow */}
+      {expired && !ssoLogin && (
+        <div className="mx-3 mb-2 rounded-lg border border-danger/30 bg-danger/6 px-3 py-2 space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <svg className="w-3 h-3 text-danger flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span className="text-[11px] font-semibold text-danger">Session expired</span>
+          </div>
+          <p className="text-[10px] text-text-muted leading-relaxed">
+            Click <strong className="text-text-secondary">Renew</strong> — your browser will open to approve the login.
+          </p>
+        </div>
+      )}
+
       {/* Actions */}
       <div className="flex gap-1 px-3 pb-3 pt-1 border-t border-border-subtle">
         {!active ? (
           <Button
             variant="primary" size="sm"
-            loading={isStarting}
+            loading={isStarting || ssoLogin?.status === 'polling'}
             className="flex-1 py-1 text-[11px]"
             onClick={e => { e.stopPropagation(); onStart() }}
           >
-            Start session
+            {ssoLogin?.status === 'polling' ? 'Waiting for browser…' : ssoLogin?.status === 'starting' ? 'Opening browser…' : expired ? '🔄 Renew session' : 'Start session'}
           </Button>
         ) : (
           <>
             <Button
               variant="secondary" size="sm"
-              loading={isRenewing}
+              loading={isRenewing || ssoLogin?.status === 'polling'}
               className="flex-1 py-1 text-[11px]"
               onClick={e => { e.stopPropagation(); onRenew() }}
               title="Renew — re-request credentials"
             >
-              Renew
+              {ssoLogin?.status === 'polling' ? 'Waiting for browser…' : 'Renew'}
             </Button>
             <IconButton
               onClick={e => { e.stopPropagation(); onStop() }}
@@ -371,7 +422,7 @@ export function Orbit({
   favorites, envOverrides,
   onSelectSession, onStartSession, onRenewSession, onStopSession, onSetDefault, onOpenConsole,
   onDetectClusters, onToggleFavorite, onAddConnection, onNavigate,
-  updateInfo, onUpdateClick, onDismissUpdate,
+  updateInfo, onUpdateClick, onDismissUpdate, ssoLoginState = {},
 }: OrbitProps) {
   const [tab, setTab] = useState<Tab>('active')
   const [starting, setStarting] = useState<string | null>(null)
@@ -681,6 +732,7 @@ export function Orbit({
                     isStarting={starting === key}
                     isRenewing={card.session ? renewing === card.session.id : false}
                     isDetecting={card.session ? detecting === card.session.id : false}
+                    ssoLogin={ssoLoginState[key]}
                     onStart={() => handleStart(card.profile)}
                     onRenew={() => card.session && handleRenew(card.session)}
                     onStop={() => card.session && handleStop(card.session)}

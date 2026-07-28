@@ -28,6 +28,7 @@ interface LoginState {
   deviceCode?: string
   interval?: number
   error?: string
+  verificationUrl?: string
 }
 
 let sessionIdCounter = 100
@@ -538,6 +539,9 @@ export default function App() {
       setLoginState(prev => ({ ...prev, [key]: { status: 'starting' } }))
       const loginInfo = await api.ssoLoginStart(profile.startUrl, profile.ssoRegion)
 
+      // Auto-open the browser so the user doesn't have to find the URL
+      api.openExternalUrl(loginInfo.verificationUriComplete).catch(() => {})
+
       setLoginState(prev => ({
         ...prev,
         [key]: {
@@ -546,6 +550,7 @@ export default function App() {
           clientSecret: loginInfo.clientSecret,
           deviceCode: loginInfo.deviceCode,
           interval: loginInfo.interval,
+          verificationUrl: loginInfo.verificationUriComplete,
         },
       }))
 
@@ -835,6 +840,7 @@ export default function App() {
             updateInfo={updateInfo}
             onUpdateClick={() => setUpdaterDismissed(false)}
             onDismissUpdate={() => setUpdateInfo(null)}
+            ssoLoginState={loginState}
           />
         )
       case 'accounts':

@@ -711,6 +711,15 @@ function RoleRow({ row, isSelected, isStarting, isFavorite, onToggleFavorite, on
             Start
           </Button>
         )}
+        {hovered && row.session && sessionStatus === 'expired' && (
+          <Button
+            variant="secondary" size="sm" loading={isStarting}
+            className="py-0.5 px-1.5 text-[10px]"
+            onClick={e => { e.stopPropagation(); onStart() }}
+          >
+            Renew
+          </Button>
+        )}
       </div>
 
       {menu && (
@@ -1043,6 +1052,14 @@ function OverviewTab({ account, expiryLabel, expiryStatus, sessionStatus, onStar
             <polygon points="5 3 19 12 5 21 5 3"/>
           </svg>
           Start Session
+        </Button>
+      )}
+      {account.session && sessionStatus === 'expired' && (
+        <Button variant="primary" size="sm" className="w-full" onClick={() => onStart(selectedRegion)} loading={isStarting}>
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+          Renew Session
         </Button>
       )}
     </div>

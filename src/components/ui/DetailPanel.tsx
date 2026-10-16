@@ -13,6 +13,7 @@ interface DetailPanelProps {
   activity: ActivityEvent[]
   onClose: () => void
   onRenew: (session: Session) => void
+  onStop: (session: Session) => void
   onConsole: (session: Session) => void
   onActivateCluster: (cluster: ClusterInfo, session: Session) => void
   onDetectClusters?: (session: Session) => Promise<void>
@@ -52,7 +53,7 @@ function InfoRow({ label, value, mono = false }: { label: string; value: string;
   )
 }
 
-export function DetailPanel({ session, clusters, activity, onClose, onRenew, onConsole, onActivateCluster, onDetectClusters }: DetailPanelProps) {
+export function DetailPanel({ session, clusters, activity, onClose, onRenew, onStop, onConsole, onActivateCluster, onDetectClusters }: DetailPanelProps) {
   const { label: expiryLabel, status: expiryStatus } = formatExpiry(session.expiresAt)
   const sessionStatus = expiryStatus === 'expired' ? 'expired' : expiryStatus === 'expiring' ? 'expiring' : 'active'
   const [detecting, setDetecting] = React.useState(false)
@@ -199,6 +200,17 @@ export function DetailPanel({ session, clusters, activity, onClose, onRenew, onC
 
       {/* Actions */}
       <div className="p-3 border-t border-border flex gap-2 flex-shrink-0">
+        <Button
+          variant="danger"
+          size="sm"
+          className="flex-1"
+          onClick={() => onStop(session)}
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="6" y="6" width="12" height="12" rx="1"/>
+          </svg>
+          Stop
+        </Button>
         <Button
           variant="secondary"
           size="sm"

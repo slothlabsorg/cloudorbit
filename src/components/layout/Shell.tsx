@@ -23,6 +23,7 @@ interface ShellProps {
   selectedSession: Session | null
   onCloseDetail: () => void
   onRenewSession: (session: Session) => void
+  onStopSession: (session: Session) => void
   onOpenConsole: (session: Session) => void
   onActivateCluster: (cluster: ClusterInfo, session: Session) => void
   onDetectClusters?: (session: Session) => Promise<void>
@@ -34,7 +35,7 @@ interface ShellProps {
 export function Shell({
   screen, onNavigate, sidebarCollapsed, onToggleSidebar, newsUnread,
   bellItems, onNewsMarkRead, onTriggerUpdate, onDismissUpdate, onCheckUpdates,
-  sessions, selectedSession, onCloseDetail, onRenewSession, onOpenConsole,
+  sessions, selectedSession, onCloseDetail, onRenewSession, onStopSession, onOpenConsole,
   onActivateCluster, onDetectClusters, activeCluster, activity, children,
 }: ShellProps) {
   const activeSessions = sessions.filter(s => new Date(s.expiresAt).getTime() > Date.now())
@@ -80,6 +81,7 @@ export function Shell({
                   activity={activity}
                   onClose={onCloseDetail}
                   onRenew={onRenewSession}
+                  onStop={onStopSession}
                   onConsole={onOpenConsole}
                   onActivateCluster={onActivateCluster}
                   onDetectClusters={onDetectClusters}

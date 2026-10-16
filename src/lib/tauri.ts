@@ -122,6 +122,9 @@ export const api = {
   setDefaultSession: (accessKeyId: string, secretAccessKey: string, sessionToken: string, region: string) =>
     invoke<void>('set_default_session', { accessKeyId, secretAccessKey, sessionToken, region }),
 
+  updateSessionRegion: (profileName: string, newRegion: string) =>
+    invoke<void>('update_session_region', { profileName, newRegion }),
+
   listCredentialSessions: () =>
     invoke<Array<{
       profileName: string

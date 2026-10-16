@@ -20,6 +20,8 @@ interface AccountsProps {
   selectedSession: Session | null
   onSelectSession: (s: Session) => void
   onStartSession: (p: Profile) => Promise<void>
+  onStopSession: (s: Session) => void
+  onChangeRegion: (session: Session, newRegion: string) => void
   onAddConnection: (group: SsoGroup) => void
   onDetectClusters?: (s: Session) => Promise<void>
   favorites: Set<string>
@@ -56,7 +58,7 @@ function maskId(id: string): string {
 
 export function Accounts({
   sessions, ssoGroups, isLoading, selectedSession,
-  onSelectSession, onStartSession, onAddConnection, onDetectClusters,
+  onSelectSession, onStartSession, onStopSession, onChangeRegion, onAddConnection, onDetectClusters,
   favorites, onToggleFavorite, envOverrides, onSetEnvOverride,
   customTags, onSetCustomTag, onRenameSso,
   accountAliases = {}, onRenameAccount,
@@ -336,6 +338,8 @@ export function Accounts({
               account={selectedAccount}
               onClose={() => setSelectedAccountKey(null)}
               onStart={(region) => handleStart(selectedAccount, region)}
+              onStop={() => selectedAccount.session && onStopSession(selectedAccount.session)}
+              onChangeRegion={(region) => selectedAccount.session && onChangeRegion(selectedAccount.session, region)}
               isStarting={starting === selectedAccount.key}
               onDetectClusters={onDetectClusters}
             />
@@ -869,10 +873,12 @@ function AccountTableRow({ row, index, isSelected, isStarting, onClick, onStart 
 
 type DetailTab = 'overview' | 'roles' | 'clusters' | 'rules' | 'security'
 
-function AccountDetailPanel({ account, onClose, onStart, isStarting, onDetectClusters }: {
+function AccountDetailPanel({ account, onClose, onStart, onStop, onChangeRegion, isStarting, onDetectClusters }: {
   account: AccountRow
   onClose: () => void
   onStart: (region: string) => void
+  onStop: () => void
+  onChangeRegion: (region: string) => void
   isStarting: boolean
   onDetectClusters?: (s: Session) => Promise<void>
 }) {
@@ -946,7 +952,7 @@ function AccountDetailPanel({ account, onClose, onStart, isStarting, onDetectClu
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.15 }}
           >
-            {tab === 'overview' && <OverviewTab account={account} expiryLabel={expiryLabel} expiryStatus={expiryStatus} sessionStatus={sessionStatus} onStart={onStart} isStarting={isStarting} />}
+            {tab === 'overview' && <OverviewTab account={account} expiryLabel={expiryLabel} expiryStatus={expiryStatus} sessionStatus={sessionStatus} onStart={onStart} onStop={onStop} onChangeRegion={onChangeRegion} isStarting={isStarting} />}
             {tab === 'roles' && <RolesTab account={account} />}
             {tab === 'clusters' && <ClustersTab account={account} onDetectClusters={onDetectClusters} />}
             {tab === 'rules' && <RulesTab />}
@@ -969,12 +975,14 @@ const AWS_REGIONS = [
   'us-gov-east-1', 'us-gov-west-1',
 ]
 
-function OverviewTab({ account, expiryLabel, expiryStatus, sessionStatus, onStart, isStarting }: {
+function OverviewTab({ account, expiryLabel, expiryStatus, sessionStatus, onStart, onStop, onChangeRegion, isStarting }: {
   account: AccountRow
   expiryLabel: string
   expiryStatus: 'active' | 'expiring' | 'expired' | 'idle'
   sessionStatus: 'active' | 'expiring' | 'expired' | 'idle'
   onStart: (region: string) => void
+  onStop: () => void
+  onChangeRegion: (region: string) => void
   isStarting: boolean
 }) {
   const [copied, setCopied] = useState(false)
@@ -983,6 +991,17 @@ function OverviewTab({ account, expiryLabel, expiryStatus, sessionStatus, onStar
     ? AWS_REGIONS
     : [defaultRegion, ...AWS_REGIONS]
   const [selectedRegion, setSelectedRegion] = useState(defaultRegion)
+
+  // When account/session region changes externally, sync local state
+  useEffect(() => { setSelectedRegion(account.region) }, [account.region])
+
+  const handleRegionChange = (newRegion: string) => {
+    setSelectedRegion(newRegion)
+    // If there's an active session, persist the region change immediately
+    if (account.session && sessionStatus !== 'expired') {
+      onChangeRegion(newRegion)
+    }
+  }
 
   const copyId = () => {
     if (account.accountId) {
@@ -1008,12 +1027,12 @@ function OverviewTab({ account, expiryLabel, expiryStatus, sessionStatus, onStar
         <DetailRow label="Alias" value={account.name} />
         <DetailRow label="Account ID" value={account.accountId ?? '—'} mono onCopy={account.accountId ? copyId : undefined} copied={copied} />
         <DetailRow label="Role" value={account.roleName ?? '—'} />
-        {/* Region selector — allows overriding the profile default for this session */}
+        {/* Region selector — changes apply immediately when a session is active */}
         <div className="flex items-center justify-between gap-2 py-1.5 border-b border-border-subtle">
           <span className="text-text-muted text-xs flex-shrink-0">Region</span>
           <select
             value={selectedRegion}
-            onChange={e => setSelectedRegion(e.target.value)}
+            onChange={e => handleRegionChange(e.target.value)}
             className="bg-transparent text-text-secondary text-xs font-mono text-right border-none outline-none cursor-pointer hover:text-primary transition-colors appearance-none"
           >
             {regionOptions.map(r => (
@@ -1053,6 +1072,22 @@ function OverviewTab({ account, expiryLabel, expiryStatus, sessionStatus, onStar
           </svg>
           Start Session
         </Button>
+      )}
+      {account.session && sessionStatus !== 'expired' && (
+        <div className="flex gap-2">
+          <Button variant="danger" size="sm" className="flex-1" onClick={onStop}>
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="6" y="6" width="12" height="12" rx="1"/>
+            </svg>
+            Stop
+          </Button>
+          <Button variant="secondary" size="sm" className="flex-1" onClick={() => onStart(selectedRegion)} loading={isStarting}>
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+            </svg>
+            Renew
+          </Button>
+        </div>
       )}
       {account.session && sessionStatus === 'expired' && (
         <Button variant="primary" size="sm" className="w-full" onClick={() => onStart(selectedRegion)} loading={isStarting}>

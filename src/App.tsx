@@ -668,6 +668,24 @@ export default function App() {
     })
   }, [addActivity, selectedSession])
 
+  // Change region on an active session — updates ~/.aws/credentials and local state.
+  const handleChangeRegion = useCallback(async (session: Session, newRegion: string) => {
+    try {
+      await api.updateSessionRegion(session.profileName, newRegion)
+    } catch (err) {
+      console.warn('updateSessionRegion error (continuing):', err)
+    }
+    setSessions(prev => prev.map(s =>
+      s.id === session.id ? { ...s, region: newRegion } : s
+    ))
+    addActivity({
+      type: 'session-renew',
+      title: `Region changed to ${newRegion}`,
+      reference: `${session.accountName} / ${session.roleName}`,
+      method: session.method,
+    })
+  }, [addActivity])
+
   // Pin a session as [default] — writes its credentials to [default] in
   // ~/.aws/credentials so any AWS SDK call without --profile picks it up.
   // Toggling the same session off clears [default] from the file.
@@ -852,6 +870,8 @@ export default function App() {
             selectedSession={selectedSession}
             onSelectSession={setSelectedSession}
             onStartSession={handleStartSession}
+            onStopSession={handleStopSession}
+            onChangeRegion={handleChangeRegion}
             onAddConnection={handleAddConnection}
             onDetectClusters={handleDetectClusters}
             favorites={favorites}
@@ -918,6 +938,7 @@ export default function App() {
         selectedSession={selectedSession}
         onCloseDetail={() => setSelectedSession(null)}
         onRenewSession={handleRenewSession}
+        onStopSession={handleStopSession}
         onOpenConsole={handleOpenConsole}
         onActivateCluster={handleActivateCluster}
         onDetectClusters={handleDetectClusters}

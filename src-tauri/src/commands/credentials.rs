@@ -733,6 +733,89 @@ pub fn clear_session_credentials(
     Ok(())
 }
 
+/// Update only the `region` field in an existing profile section of ~/.aws/credentials.
+/// Called when the user changes region on an active session — avoids a full re-login.
+#[tauri::command]
+pub fn update_session_region(
+    profile_name: String,
+    new_region: String,
+) -> Result<(), String> {
+    let cred_path = home_dir()
+        .ok_or("No home dir")?
+        .join(".aws")
+        .join("credentials");
+
+    let content = fs::read_to_string(&cred_path).unwrap_or_default();
+
+    let mut sections: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut cur = String::new();
+
+    for line in content.lines() {
+        if line.starts_with('[') && line.ends_with(']') {
+            cur = line[1..line.len() - 1].to_string();
+            if !sections.contains_key(&cur) {
+                order.push(cur.clone());
+                sections.insert(cur.clone(), Vec::new());
+            }
+        } else if !cur.is_empty() {
+            sections.get_mut(&cur).unwrap().push(line.to_string());
+        }
+    }
+
+    // Find and update the region line in the target profile
+    if let Some(lines) = sections.get_mut(&profile_name) {
+        let mut found = false;
+        for line in lines.iter_mut() {
+            if line.trim_start().starts_with("region") {
+                *line = format!("region = {}", new_region);
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            lines.push(format!("region = {}", new_region));
+        }
+    } else {
+        return Err(format!("Profile '{}' not found in credentials file", profile_name));
+    }
+
+    // Also update [default] if it exists and belongs to the same session
+    // (we detect this by checking if the access key matches)
+    if profile_name != "default" {
+        if let (Some(profile_lines), Some(default_lines)) = (
+            sections.get(&profile_name).cloned(),
+            sections.get_mut("default"),
+        ) {
+            let profile_key = profile_lines.iter()
+                .find(|l| l.starts_with("aws_access_key_id"))
+                .map(|l| l.split('=').nth(1).unwrap_or("").trim().to_string());
+            let default_key = default_lines.iter()
+                .find(|l| l.starts_with("aws_access_key_id"))
+                .map(|l| l.split('=').nth(1).unwrap_or("").trim().to_string());
+            if profile_key.is_some() && profile_key == default_key {
+                for line in default_lines.iter_mut() {
+                    if line.trim_start().starts_with("region") {
+                        *line = format!("region = {}", new_region);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut out = String::new();
+    for name in &order {
+        if let Some(lines) = sections.get(name) {
+            out.push_str(&format!("[{}]\n{}\n\n", name, lines.join("\n")));
+        }
+    }
+
+    fs::create_dir_all(cred_path.parent().unwrap()).map_err(|e| e.to_string())?;
+    fs::write(&cred_path, out.trim_end().to_string() + "\n").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ── Unit tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

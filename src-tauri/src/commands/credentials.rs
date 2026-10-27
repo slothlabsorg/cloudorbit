@@ -128,12 +128,10 @@ fn write_credentials_with_expiry(
     // Write only the named profile — the user explicitly controls [default]
     // via set_default_session. Auto-overwriting [default] on every session
     // start would silently break any profile the user pinned as default.
-    for name in &[profile_name] {
-        if !sections.contains_key(*name) {
-            order.push(name.to_string());
-        }
-        sections.insert(name.to_string(), block.clone());
+    if !sections.contains_key(profile_name) {
+        order.push(profile_name.to_string());
     }
+    sections.insert(profile_name.to_string(), block);
 
     let mut out = String::new();
     for name in &order {
@@ -407,7 +405,7 @@ pub async fn assume_role_chained(
         session_token: token,
         expires_at,
         account_id,
-        role_name: role_arn.split('/').last().unwrap_or("").to_string(),
+        role_name: role_arn.split('/').next_back().unwrap_or("").to_string(),
     })
 }
 
@@ -424,7 +422,7 @@ pub async fn assume_role_federated(
     // Federated calls don't carry pre-existing credentials; use anonymous config
     // with optional endpoint override for LocalStack.
     let cfg = {
-        use aws_config::{BehaviorVersion, Region, SdkConfig};
+        use aws_config::{BehaviorVersion, Region};
         use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
         let https = hyper_tls::HttpsConnector::new();
         let http_client = HyperClientBuilder::new().build(https);
@@ -470,7 +468,7 @@ pub async fn assume_role_federated(
         session_token: token,
         expires_at,
         account_id,
-        role_name: role_arn.split('/').last().unwrap_or("").to_string(),
+        role_name: role_arn.split('/').next_back().unwrap_or("").to_string(),
     })
 }
 

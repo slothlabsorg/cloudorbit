@@ -17,6 +17,10 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      # LocalStack now requires an account; integration tests run only when
+      # the LOCALSTACK_AUTH_TOKEN secret is set (free at app.localstack.cloud).
+      HAS_LOCALSTACK_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN != '' }}
 
     strategy:
       fail-fast: true
@@ -78,24 +82,27 @@ jobs:
         run: cargo test --locked
 
       # ── LocalStack integration tests ─────────────────────────────────────
+      - name: Skip LocalStack integration tests (no token)
+        if: env.HAS_LOCALSTACK_TOKEN != 'true'
+        run: echo "::warning::LOCALSTACK_AUTH_TOKEN secret not set — skipping LocalStack integration tests"
+
       - name: Start LocalStack
+        if: env.HAS_LOCALSTACK_TOKEN == 'true'
         uses: LocalStack/setup-localstack@v0.2.3
         with:
           image-tag: 'latest'
           install-awslocal: true
-          # The free image now asks for an account; this flag keeps it running
-          # without Pro features during LocalStack's grace period. Long-term fix:
-          # add a free LOCALSTACK_AUTH_TOKEN secret.
-          configuration: LOCALSTACK_ACKNOWLEDGE_ACCOUNT_REQUIREMENT=1
         env:
           LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
 
       - name: Bootstrap LocalStack resources
+        if: env.HAS_LOCALSTACK_TOKEN == 'true'
         run: bash tests/localstack/setup.sh
         env:
           AWS_ENDPOINT_URL: http://localhost:4566
 
       - name: cargo test (LocalStack integration)
+        if: env.HAS_LOCALSTACK_TOKEN == 'true'
         working-directory: src-tauri
         run: cargo test --locked -- --ignored
         env:

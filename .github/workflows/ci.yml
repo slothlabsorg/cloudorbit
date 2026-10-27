@@ -83,6 +83,12 @@ jobs:
         with:
           image-tag: 'latest'
           install-awslocal: true
+          # The free image now asks for an account; this flag keeps it running
+          # without Pro features during LocalStack's grace period. Long-term fix:
+          # add a free LOCALSTACK_AUTH_TOKEN secret.
+          configuration: LOCALSTACK_ACKNOWLEDGE_ACCOUNT_REQUIREMENT=1
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
 
       - name: Bootstrap LocalStack resources
         run: bash tests/localstack/setup.sh

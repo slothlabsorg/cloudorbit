@@ -81,6 +81,31 @@ jobs:
 
       # Icons are pre-generated and committed — no generation step needed in CI
 
+      # Apple code-signing + notarization. Turns on automatically once the six
+      # APPLE_* secrets exist; without them the build ships an unsigned DMG.
+      # (Exported via GITHUB_ENV because Tauri treats an empty APPLE_CERTIFICATE
+      # as "sign with this" and fails.)
+      - name: Enable Apple code-signing (if configured)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY:     ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID:                   ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD:             ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::APPLE_* secrets not set — building an unsigned DMG"
+            exit 0
+          fi
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!v}" ] || { echo "::error::$v is missing — set all six APPLE_* secrets"; exit 1; }
+            { echo "$v<<__APPLE_EOF__"; echo "${!v}"; echo "__APPLE_EOF__"; } >> "$GITHUB_ENV"
+          done
+          echo "Apple signing + notarization enabled"
+
       - name: Build and publish release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -88,21 +113,15 @@ jobs:
           # Signing key — generate with: cargo tauri signer generate -w ~/.tauri/cloudorbit.key
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # ── Apple code-signing (uncomment when Apple Developer account is ready) ──
-          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'CloudOrbit ${{ github.ref_name }}'
           releaseBody: |
-            See the [CHANGELOG](https://github.com/slothlabs/cloudorbit/blob/main/CHANGELOG.md) for details.
+            See the [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
 
             **Install via Homebrew:**
             ```bash
-            brew install --cask slothlabs/tap/cloudorbit
+            brew install --cask slothlabsorg/tap/cloudorbit
             ```
 
             **Install via WinGet:**
